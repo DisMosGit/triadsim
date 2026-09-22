@@ -115,8 +115,18 @@ func (sess *session) dispatch(ctx context.Context, rpc incomingRPC) (rpcReply, b
 	}
 
 	switch operation.Name {
+	case "get-config":
+		data, err := ops.GetConfig(ctx, sess.deps(), operation)
+		if err != nil {
+			return errorReplyFrom(rpc.MessageID, err), false
+		}
+		reply := newReply(rpc.MessageID)
+		reply.Data = data
+		return reply, false
+
 	case "close-session":
 		return okReply(rpc.MessageID), true
+
 	default:
 		return errorReply(rpc.MessageID, ops.NotSupported("operation %s is not supported", operation.Name)), false
 	}

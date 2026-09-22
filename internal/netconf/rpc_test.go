@@ -155,6 +155,49 @@ func errorTag(t *testing.T, reply *ops.Element) string {
 	return tag.TrimmedText()
 }
 
+func TestGetConfigOverSSH(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      framingMode
+		helloMode framingMode
+		helloCaps []string
+	}{
+		{
+			name:      "end-of-message",
+			mode:      framingEOM,
+			helloMode: framingEOM,
+			helloCaps: []string{CapabilityBase10},
+		},
+		{
+			name:      "chunked",
+			mode:      framingChunked,
+			helloMode: framingChunked,
+			helloCaps: []string{CapabilityBase11, CapabilityBase10},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, st := newTestStore(t)
+			srv := startTestServer(t, r, st, nil)
+			io, _ := openNetconfSession(t, dialSSH(t, srv.Addr().String()))
+			sendHello(t, io, tt.helloMode, tt.helloCaps...)
+
+			send(t, io, tt.mode, `<rpc message-id="7"><get-config><source><running/></source>`+
+				`<filter><system-info><device-id/></system-info></filter></get-config></rpc>`)
+
+			reply := readReply(t, io, tt.mode)
+			assert.Equal(t, "7", mustAttr(t, reply, "message-id"))
+
+			data := reply.Child("data")
+			require.NotNil(t, data)
+			systemInfo := data.Child("system-info")
+			require.NotNil(t, systemInfo)
+			assert.Equal(t, "sim-001", systemInfo.Child("device-id").TrimmedText())
+		})
+	}
+}
+
 func TestCloseSessionRepliesOkAndEndsTheSession(t *testing.T) {
 	r, st := newTestStore(t)
 	srv := startTestServer(t, r, st, nil)
