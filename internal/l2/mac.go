@@ -32,9 +32,14 @@ func (m *Manager) Learn(ctx context.Context, mac string, vlanID uint16, port str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.learn(ctx, address, vlanID, port)
+}
+
+// learn is Learn for a canonical address with the manager lock already held.
+func (m *Manager) learn(ctx context.Context, address string, vlanID uint16, port string) (model.MACEntry, error) {
 	device, err := m.router.Snapshot(ctx, store.Running)
 	if err != nil {
-		return model.MACEntry{}, fmt.Errorf("l2: learn %s: %w", mac, err)
+		return model.MACEntry{}, fmt.Errorf("l2: learn %s: %w", address, err)
 	}
 	index, err := bridgePortOf(device, port)
 	if err != nil {
