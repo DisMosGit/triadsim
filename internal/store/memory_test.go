@@ -303,8 +303,8 @@ func TestMemoryRestorePersistsStartup(t *testing.T) {
 
 func TestMemoryRestorePersistFailureLeavesRunning(t *testing.T) {
 	ctx := context.Background()
-	// A directory is not writable with os.WriteFile, so the restore must fail
-	// before running is swapped.
+	// The startup path is a directory, so the atomic write must fail before
+	// running is swapped.
 	m := NewMemory(Options{StartupFile: t.TempDir()})
 	set(t, m, Running, "a/1", 2)
 	snapshot, err := m.Snapshot(ctx)
@@ -445,8 +445,8 @@ func TestMemoryCommitPersistsStartup(t *testing.T) {
 
 func TestMemoryCommitPersistFailureLeavesRunning(t *testing.T) {
 	ctx := context.Background()
-	// A directory is not writable with os.WriteFile, so the commit must fail
-	// before running is swapped.
+	// The startup path is a directory, so the atomic write must fail before
+	// running is swapped.
 	m := NewMemory(Options{StartupFile: t.TempDir()})
 	set(t, m, Candidate, "a/1", 2)
 

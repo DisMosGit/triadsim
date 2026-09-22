@@ -118,8 +118,10 @@ contents. This is a deliberate Phase 4 limitation, recorded in `ROADMAP.md`.
 
 `startup` is persisted as JSON (`startup.json`, path configurable through `startup.file` in
 `configs/default.yaml`). It is written on commit and loaded at boot into running; the file is
-listed in `.gitignore` because it is runtime state. Persistence uses `encoding/json` and
-`os.WriteFile` only — no database.
+listed in `.gitignore` because it is runtime state. Persistence uses `encoding/json` only — no
+database — and the document is replaced atomically (temporary file, `fsync`, `rename`, directory
+`fsync`), so a crash or a full disk mid-commit cannot leave a truncated `startup.json` that the
+next boot refuses to load.
 
 The document is versioned and every leaf carries its Go type, because plain JSON would decode
 every number as `float64` and silently change the type of an `int` or `uint32` leaf across a

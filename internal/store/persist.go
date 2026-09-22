@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // fileVersion is the schema version written by Save and accepted by Load.
@@ -66,9 +67,16 @@ func leafKindOf(value any) (string, bool) {
 	}
 }
 
-// Save writes values to path as the versioned startup document, using
-// os.WriteFile with mode 0o600. An empty path, an unsupported value type or an
-// I/O failure is an error; the file is not modified when a value is rejected.
+// Save writes values to path as the versioned startup document.
+//
+// The file is replaced atomically: the document is written to a temporary file
+// in the same directory, flushed and renamed over path, so a crash, a kill or
+// a full disk mid-write cannot leave a truncated document that the next boot
+// refuses to load. Callers that need to serialize concurrent writers must do
+// so themselves; Memory holds its lock across Save.
+//
+// An empty path, an unsupported value type or an I/O failure is an error; the
+// file is not modified when a value is rejected.
 func Save(ctx context.Context, path string, values map[string]any) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -96,10 +104,63 @@ func Save(ctx context.Context, path string, values map[string]any) error {
 	}
 	data = append(data, '\n')
 
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		return fmt.Errorf("store: save %s: %w", path, err)
 	}
 	return nil
+}
+
+// writeFileAtomic replaces path with data through a temporary file in the same
+// directory, an fsync of that file and a rename, then flushes the directory so
+// the rename itself survives a crash. The temporary file is removed on every
+// failure path.
+func writeFileAtomic(path string, data []byte) error {
+	// A directory is never a valid target; fail before touching anything so
+	// the error does not depend on rename semantics.
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return errors.New("target is a directory")
+	}
+
+	tmp := path + ".tmp"
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	discard := func(cause error) error {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return cause
+	}
+
+	if _, err := file.Write(data); err != nil {
+		return discard(fmt.Errorf("write temporary file: %w", err))
+	}
+	if err := file.Sync(); err != nil {
+		return discard(fmt.Errorf("sync temporary file: %w", err))
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename temporary file: %w", err)
+	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync directory: %w", err)
+	}
+	return nil
+}
+
+// syncDir flushes the directory entry of a renamed file, so the rename itself
+// survives a crash and not just the file contents.
+func syncDir(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = handle.Close() }()
+	return handle.Sync()
 }
 
 // Load reads the startup document at path. A missing file yields an empty map

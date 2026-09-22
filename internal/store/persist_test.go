@@ -138,6 +138,36 @@ func TestSaveLoadEmptyPath(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestSaveLeavesNoTemporaryFile(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "startup.json")
+
+	require.NoError(t, Save(ctx, path, map[string]any{"a/1": 1}))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	_, err = os.Stat(path + ".tmp")
+	assert.True(t, errors.Is(err, os.ErrNotExist), "the temporary file must not survive a successful save")
+}
+
+func TestSaveRejectsDirectoryTarget(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	err := Save(ctx, dir, map[string]any{"a/1": 1})
+
+	require.Error(t, err)
+
+	info, statErr := os.Stat(dir)
+	require.NoError(t, statErr)
+	assert.True(t, info.IsDir(), "the target must stay a directory")
+
+	_, statErr = os.Stat(dir + ".tmp")
+	assert.True(t, errors.Is(statErr, os.ErrNotExist), "a rejected save must leave no temporary file")
+}
+
 func TestSaveLoadCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
