@@ -3,6 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 // Interface type values.
@@ -78,12 +80,32 @@ const (
 	STPPortRoleBackup     = "backup"
 )
 
-// RSTP port states.
+// STP port states. Classic STP (IEEE 802.1D) walks a port through disabled,
+// blocking, listening, learning and forwarding; RSTP (IEEE 802.1D-2004)
+// collapses the first three into discarding.
 const (
+	STPPortStateDisabled   = "disabled"
+	STPPortStateBlocking   = "blocking"
+	STPPortStateListening  = "listening"
 	STPPortStateDiscarding = "discarding"
 	STPPortStateLearning   = "learning"
 	STPPortStateForwarding = "forwarding"
 )
+
+// STPPortStates returns the port-state vocabulary of a protocol, which is what
+// STPState.Validate accepts for its ports.
+func STPPortStates(protocol string) []string {
+	if protocol == STPProtocolRSTP {
+		return []string{STPPortStateDiscarding, STPPortStateLearning, STPPortStateForwarding}
+	}
+	return []string{
+		STPPortStateDisabled,
+		STPPortStateBlocking,
+		STPPortStateListening,
+		STPPortStateLearning,
+		STPPortStateForwarding,
+	}
+}
 
 // STP priority bounds and steps (both are multiples of 4096/16).
 const (
@@ -409,9 +431,14 @@ func (s STPState) Validate() error {
 		return fmt.Errorf("malformed root-id %q", s.RootID)
 	}
 	if s.Enabled {
+		states := STPPortStates(s.Protocol)
 		for i, port := range s.Ports {
 			if err := port.Validate(); err != nil {
 				return fmt.Errorf("ports[%d]: %w", i, err)
+			}
+			if !slices.Contains(states, port.State) {
+				return fmt.Errorf("ports[%d]: state %q is not a %s state (want one of %s)",
+					i, port.State, s.Protocol, strings.Join(states, ", "))
 			}
 		}
 	}
@@ -430,7 +457,8 @@ func (p STPPort) Validate() error {
 		return fmt.Errorf("port %s: unknown role %q", p.Port, p.Role)
 	}
 	switch p.State {
-	case STPPortStateDiscarding, STPPortStateLearning, STPPortStateForwarding:
+	case STPPortStateDisabled, STPPortStateBlocking, STPPortStateListening,
+		STPPortStateDiscarding, STPPortStateLearning, STPPortStateForwarding:
 	default:
 		return fmt.Errorf("port %s: unknown state %q", p.Port, p.State)
 	}

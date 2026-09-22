@@ -254,6 +254,15 @@ func TestSTPStateValidate(t *testing.T) {
 			s.Ports = []STPPort{validSTPPort()}
 			s.Ports[0].Role = "master"
 		}, wantErr: true},
+		{name: "classic stp port state", mutate: func(s *STPState) {
+			s.Protocol = STPProtocolSTP
+			s.Ports = []STPPort{validSTPPort()}
+			s.Ports[0].State = STPPortStateBlocking
+		}},
+		{name: "rstp rejects a classic state", mutate: func(s *STPState) {
+			s.Ports = []STPPort{validSTPPort()}
+			s.Ports[0].State = STPPortStateListening
+		}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -282,7 +291,9 @@ func TestSTPPortValidate(t *testing.T) {
 		{name: "empty port", mutate: func(p *STPPort) { p.Port = "" }, wantErr: true},
 		{name: "unknown role", mutate: func(p *STPPort) { p.Role = "master" }, wantErr: true},
 		{name: "empty role", mutate: func(p *STPPort) { p.Role = "" }, wantErr: true},
-		{name: "unknown state", mutate: func(p *STPPort) { p.State = "blocking" }, wantErr: true},
+		{name: "unknown state", mutate: func(p *STPPort) { p.State = "master" }, wantErr: true},
+		{name: "classic stp state", mutate: func(p *STPPort) { p.State = STPPortStateBlocking }},
+		{name: "classic stp listening", mutate: func(p *STPPort) { p.State = STPPortStateListening }},
 		{name: "empty state", mutate: func(p *STPPort) { p.State = "" }, wantErr: true},
 		{name: "priority at minimum", mutate: func(p *STPPort) { p.Priority = 0 }},
 		{name: "priority at maximum", mutate: func(p *STPPort) { p.Priority = STPPortPriorityMax }},

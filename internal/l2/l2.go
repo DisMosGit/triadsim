@@ -45,6 +45,9 @@ type Deps struct {
 	// TickInterval is the period of Run's background work. Zero selects
 	// DefaultTickInterval.
 	TickInterval time.Duration
+	// ForwardDelay is the listening and learning delay of the spanning-tree
+	// machine. Zero selects DefaultForwardDelay.
+	ForwardDelay time.Duration
 }
 
 // Manager implements the L2 switching domain: VLANs and QinQ, the MAC
@@ -60,6 +63,7 @@ type Manager struct {
 	bus          *event.Bus
 	clock        clock.Clock
 	tickInterval time.Duration
+	forwardDelay time.Duration
 
 	// mu serialises the read-modify-write cycles of the background work
 	// (aging, LLDP refresh, counter bumps) and storm accounting.
@@ -68,6 +72,8 @@ type Manager struct {
 	// lastAging is the clock reading of the previous MAC-aging sweep. The zero
 	// value means no sweep has run yet.
 	lastAging time.Time
+	// stpPending maps a bridge port to its next scheduled phase change.
+	stpPending map[string]stpDeadline
 }
 
 // New builds the L2 domain manager. It fails when no router is supplied.
@@ -81,11 +87,16 @@ func New(deps Deps) (*Manager, error) {
 	if deps.TickInterval <= 0 {
 		deps.TickInterval = DefaultTickInterval
 	}
+	if deps.ForwardDelay <= 0 {
+		deps.ForwardDelay = DefaultForwardDelay
+	}
 	return &Manager{
 		router:       deps.Router,
 		bus:          deps.Bus,
 		clock:        deps.Clock,
 		tickInterval: deps.TickInterval,
+		forwardDelay: deps.ForwardDelay,
+		stpPending:   make(map[string]stpDeadline),
 	}, nil
 }
 
@@ -117,13 +128,13 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 
-// Tick performs one period of background work and returns the joined error of
-// its steps.
+// Tick performs one period of background work — MAC aging, the STP forward
+// delays and the LLDP refresh — and returns the joined error of its steps.
 func (m *Manager) Tick(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.age(ctx)
+	return errors.Join(m.age(ctx), m.advanceSTP(ctx))
 }
 
 // publish puts one event on the bus when a bus is configured.
