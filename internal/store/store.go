@@ -5,8 +5,8 @@
 // work-in-progress copy that NETCONF edits, and startup is the snapshot
 // persisted to disk and loaded at boot.
 //
-// Phase 0 freezes this contract only; the in-memory implementation with diff,
-// commit and JSON persistence lands in Phase 1.5.
+// memory.go implements this contract in memory; persist.go writes and reads
+// the startup datastore as JSON.
 package store
 
 import (
@@ -29,6 +29,22 @@ const (
 // ErrNotFound is returned when a path does not exist in the addressed
 // datastore.
 var ErrNotFound = errors.New("store: path not found")
+
+// ErrUnknownDatastore is returned when a method is called with a datastore
+// that is not Running, Candidate or Startup.
+var ErrUnknownDatastore = errors.New("store: unknown datastore")
+
+// ErrInvalidPath is returned by Set when a path is empty or not in canonical
+// form (no leading or trailing slash, no empty segment).
+var ErrInvalidPath = errors.New("store: invalid path")
+
+// ErrInvalidValue is returned when a value is not one of the supported leaf
+// types (bool, int, uint32, float64, string).
+var ErrInvalidValue = errors.New("store: unsupported value type")
+
+// ErrValidation is returned by Commit when the configured Validator rejects
+// the candidate.
+var ErrValidation = errors.New("store: candidate validation failed")
 
 // Op classifies a Change reported by Diff.
 type Op string

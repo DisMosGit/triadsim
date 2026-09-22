@@ -69,6 +69,26 @@ func TestErrNotFoundIsComparable(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
 
+func TestSentinelValues(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "not found", err: ErrNotFound, want: "store: path not found"},
+		{name: "unknown datastore", err: ErrUnknownDatastore, want: "store: unknown datastore"},
+		{name: "invalid path", err: ErrInvalidPath, want: "store: invalid path"},
+		{name: "invalid value", err: ErrInvalidValue, want: "store: unsupported value type"},
+		{name: "validation", err: ErrValidation, want: "store: candidate validation failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.EqualError(t, tt.err, tt.want)
+		})
+	}
+}
+
 func TestChangeJSON(t *testing.T) {
 	tests := []struct {
 		name   string
