@@ -14,6 +14,7 @@ go run ./cmd/simulator <command> [flags]
 | `alarm inject` | post a simulated alarm to a running simulator |
 | `dump` | dump the datastore of a running simulator |
 | `config validate` | validate a YAML configuration file |
+| `schema` | print the model schema tree or the embedded YANG modules |
 | `version` | print the build version |
 
 `alarm` and `dump` talk to a **running** simulator over its RESTCONF endpoint, because the
@@ -92,6 +93,42 @@ go run ./cmd/simulator config validate --file configs/default.yaml
 `--file` defaults to `configs/default.yaml`. Validation is exactly what `start` does: the file is
 decoded on top of the built-in defaults with unknown keys rejected, then `Config.Validate` runs.
 The command prints `<file>: OK` on success and the error otherwise.
+
+## schema
+
+```bash
+go run ./cmd/simulator schema | head -20
+go run ./cmd/simulator schema --yang
+go run ./cmd/simulator schema --yang --module sim-sync
+```
+
+`schema` prints the model schema tree as indented JSON. The tree is derived from the Go model, so
+it needs no running simulator. Each node carries its router path, the YANG module that owns it
+(`router.ModuleFor`), its kind (`container`, `list` or `leaf`), the key of a list and, for a leaf,
+its type:
+
+```json
+{
+  "name": "interface",
+  "path": "interfaces/interface",
+  "module": "sim-device",
+  "kind": "list",
+  "key": "name",
+  "children": [
+    {"name": "name", "path": "interfaces/interface/name", "module": "sim-device", "kind": "leaf", "leaf": "string"}
+  ]
+}
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--yang` | `false` | print the embedded YANG modules instead of the schema tree |
+| `--module` | empty | with `--yang`, print exactly this module (`sim-sync` or `sim-sync.yang`) |
+
+With `--yang` and no `--module`, every embedded module is printed after a
+`// --- yang/<file> ---` banner, in sorted file order. The modules are documentation: the runtime
+never parses them, and `yang/yang_test.go` checks their node names against the model schema. See
+[adr/0002-model-vs-yang.md](adr/0002-model-vs-yang.md).
 
 ## version
 

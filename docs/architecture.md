@@ -43,7 +43,7 @@ synchronization — behind one managed-object model and one management plane.
 | Package | Responsibility | Phase 0 state |
 |---|---|---|
 | `cmd/simulator` | Binary entry point | delegates to `internal/cli` |
-| `internal/cli` | cobra commands: `start`, `alarm inject`, `dump`, `config validate`, `version` | implemented (Phase 0; commands Phase 6) |
+| `internal/cli` | cobra commands: `start`, `alarm inject`, `dump`, `config validate`, `schema`, `version` | implemented |
 | `internal/config` | YAML configuration, defaults, `Load`, `Validate` | implemented |
 | `internal/log` | `log/slog` JSON logging on stderr | implemented |
 | `internal/event` | typed events and the channel-based bus | implemented |
@@ -59,7 +59,7 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes, confirmed commit | implemented (Phase 2, confirmed commit Phase 3) |
 | `internal/netconf/notif` | RFC 5277 create-subscription, subscription registry and notification dispatch | implemented (Phase 3) |
 | `internal/restconf` | chi router, URL mapping, codecs, CRUD, error documents | implemented (Phase 4) |
-| `internal/gnmi` | optional gRPC service | Phase 7 |
+| `internal/gnmi` | optional gRPC service: `Capabilities`, `Get`, `Set`, `Subscribe` (ONCE, STREAM/ON_CHANGE) | implemented (Phase 7) |
 | `internal/metrics` | Prometheus collectors (`uptime`, SNMP requests, alarms, PTP transitions, config changes) and `/metrics` | implemented (Phase 1.9; counters Phase 6) |
 | `internal/tools` | blank imports pinning the approved dependency stack | build tag `tools` only |
 
@@ -85,6 +85,9 @@ synchronization — behind one managed-object model and one management plane.
   element tree and the error type) and `internal/clock`, and never on the parent package. A
   session's notification write goes through the session's own message writer, which is safe for
   concurrent use, so a reply and a notification never interleave.
+- `yang` embeds the documentation-only YANG modules. It depends on nothing, and no package on the
+  data path imports it: `internal/cli` reads it for `schema --yang`, and its test depends on
+  `internal/model`, `internal/router` and `internal/store` to check the modules against the model.
 - `internal/cli` and `internal/metrics` may depend on everything.
 - Domain packages never import each other: radio, L2 and sync interact only through events.
 
