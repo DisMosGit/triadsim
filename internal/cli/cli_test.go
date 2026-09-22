@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DisMosGit/triadsim/internal/store"
 )
 
 // lockedBuffer is a concurrency-safe io.Writer for log capture.
@@ -49,6 +52,47 @@ func isolateDefaultLogger(t *testing.T) {
 
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
+}
+
+// testDeps binds the management planes to ephemeral loopback ports and keeps
+// the startup file inside the test's temporary directory.
+func testDeps(t *testing.T) runtimeDeps {
+	t.Helper()
+
+	return runtimeDeps{
+		snmpAddr:    "127.0.0.1:0",
+		metricsAddr: "127.0.0.1:0",
+		startupFile: filepath.Join(t.TempDir(), "startup.json"),
+	}
+}
+
+// startRun runs the start command in the background and returns a stop
+// function plus the done channel.
+func startRun(t *testing.T, ctx context.Context, configPath string, out *lockedBuffer, deps runtimeDeps) (<-chan error, context.CancelFunc) {
+	t.Helper()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- run(runCtx, configPath, out, deps) }()
+	return done, cancel
+}
+
+// waitForRecord polls out until a JSON record with the given msg appears.
+func waitForRecord(t *testing.T, out *lockedBuffer, msg string) map[string]any {
+	t.Helper()
+
+	var found map[string]any
+	require.Eventually(t, func() bool {
+		for _, record := range decodeRecords(t, out.String()) {
+			if record["msg"] == msg {
+				found = record
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 5*time.Millisecond, "log record %q must appear", msg)
+
+	return found
 }
 
 func TestRootCmdExposesStart(t *testing.T) {
@@ -95,21 +139,14 @@ func TestStartCmdFailsOnInvalidConfig(t *testing.T) {
 	assert.ErrorContains(t, err, "unknown level")
 }
 
-func TestRunStartLogsStartAndStopOnCancelledContext(t *testing.T) {
+func TestRunLogsStartAndStop(t *testing.T) {
 	isolateDefaultLogger(t)
 	path := writeConfig(t, "log:\n  level: debug\n")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
 
-	var out bytes.Buffer
-	require.NoError(t, runStart(ctx, path, &out))
-
-	records := decodeRecords(t, &out)
-	require.Len(t, records, 2)
-
-	start := records[0]
-	assert.Equal(t, "simulator starting", start["msg"])
+	start := waitForRecord(t, out, "simulator starting")
 	assert.Equal(t, "INFO", start["level"])
 	assert.Equal(t, float64(1161), start["snmp_port"])
 	assert.Equal(t, float64(1162), start["snmp_trap_port"])
@@ -118,31 +155,32 @@ func TestRunStartLogsStartAndStopOnCancelledContext(t *testing.T) {
 	assert.Equal(t, float64(9090), start["metrics_port"])
 	assert.Equal(t, false, start["gnmi_enabled"])
 	assert.Equal(t, "debug", start["log_level"])
-	assert.Equal(t, "startup.json", start["startup_file"])
+	assert.Equal(t, "sim-001", start["device_id"])
 
-	stop := records[1]
-	assert.Equal(t, "simulator stopped", stop["msg"])
-	assert.Equal(t, context.Canceled.Error(), stop["reason"])
-}
-
-func TestRunStartBlocksUntilCancelled(t *testing.T) {
-	isolateDefaultLogger(t)
-	path := writeConfig(t, "log:\n  level: info\n")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	out := &lockedBuffer{}
-	done := make(chan error, 1)
-	go func() { done <- runStart(ctx, path, out) }()
-
-	require.Eventually(t, func() bool {
-		return strings.Contains(out.String(), "simulator starting")
-	}, 10*time.Second, time.Millisecond, "start must log before blocking")
+	cancel()
 
 	select {
 	case err := <-done:
-		t.Fatalf("runStart returned before cancellation: %v", err)
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not return after cancellation")
+	}
+
+	stop := waitForRecord(t, out, "simulator stopped")
+	assert.Equal(t, context.Canceled.Error(), stop["reason"])
+}
+
+func TestRunBlocksUntilCancelled(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	waitForRecord(t, out, "simulator starting")
+
+	select {
+	case err := <-done:
+		t.Fatalf("run returned before cancellation: %v", err)
 	default:
 	}
 
@@ -152,23 +190,67 @@ func TestRunStartBlocksUntilCancelled(t *testing.T) {
 	case err := <-done:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("runStart did not return after cancellation")
+		t.Fatal("run did not return after cancellation")
 	}
 	assert.Contains(t, out.String(), "simulator stopped")
 }
 
-// decodeRecords parses newline-delimited JSON records from out.
-func decodeRecords(t *testing.T, out *bytes.Buffer) []map[string]any {
+func TestRunSeedsStartupOnFirstBoot(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	deps := testDeps(t)
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, deps)
+	waitForRecord(t, out, "simulator starting")
+	cancel()
+	require.NoError(t, <-done)
+
+	values, err := store.Load(context.Background(), deps.startupFile)
+	require.NoError(t, err)
+	assert.NotEmpty(t, values)
+	assert.Equal(t, 20.0, values["interfaces/interface[name=radio0]/radio-link/tx-power"])
+}
+
+func TestRunServesMetrics(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	start := waitForRecord(t, out, "simulator starting")
+	address, ok := start["metrics_addr"].(string)
+	require.True(t, ok)
+
+	response, err := http.Get("http://" + address + "/metrics")
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+
+	body := new(bytes.Buffer)
+	_, err = body.ReadFrom(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, body.String(), "simulator_uptime_seconds")
+	assert.Contains(t, body.String(), "simulator_snmp_requests_total")
+}
+
+// decodeRecords parses newline-delimited JSON records from data.
+func decodeRecords(t *testing.T, data string) []map[string]any {
 	t.Helper()
 
 	var records []map[string]any
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
 		if line == "" {
 			continue
 		}
-		var rec map[string]any
-		require.NoError(t, json.Unmarshal([]byte(line), &rec), "line must be JSON: %s", line)
-		records = append(records, rec)
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record), "line must be JSON: %s", line)
+		records = append(records, record)
 	}
 	return records
 }
