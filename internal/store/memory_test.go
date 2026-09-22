@@ -205,6 +205,119 @@ func TestMemoryContextCanceled(t *testing.T) {
 
 	err = m.LoadStartup(ctx)
 	assert.True(t, errors.Is(err, context.Canceled))
+
+	_, err = m.Snapshot(ctx)
+	assert.True(t, errors.Is(err, context.Canceled))
+
+	err = m.Restore(ctx, map[string]any{"a/1": 1})
+	assert.True(t, errors.Is(err, context.Canceled))
+}
+
+func TestMemorySnapshotIsDetached(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	set(t, m, Running, "a/1", 1)
+	set(t, m, Running, "a/2", 2)
+
+	snapshot, err := m.Snapshot(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"a/1": 1, "a/2": 2}, snapshot)
+
+	// Later writes must not leak into the snapshot.
+	set(t, m, Running, "a/1", 99)
+	require.NoError(t, m.Delete(ctx, Running, "a/2"))
+	set(t, m, Running, "a/3", 3)
+
+	assert.Equal(t, map[string]any{"a/1": 1, "a/2": 2}, snapshot)
+}
+
+func TestMemorySnapshotOfEmptyStore(t *testing.T) {
+	ctx := context.Background()
+
+	snapshot, err := newMemory().Snapshot(ctx)
+
+	require.NoError(t, err)
+	assert.Empty(t, snapshot)
+}
+
+func TestMemoryRestoreReplacesRunningAndStartup(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	set(t, m, Running, "a/1", 1)
+	snapshot, err := m.Snapshot(ctx)
+	require.NoError(t, err)
+
+	// Commit a new configuration, then keep uncommitted candidate changes.
+	set(t, m, Candidate, "a/1", 2)
+	require.NoError(t, m.Commit(ctx))
+	set(t, m, Candidate, "a/1", 3)
+	set(t, m, Candidate, "a/9", 9)
+
+	require.NoError(t, m.Restore(ctx, snapshot))
+
+	got, err := m.Get(ctx, Running, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+
+	got, err = m.Get(ctx, Startup, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+
+	// Candidate is untouched: the uncommitted configuration survives.
+	got, err = m.Get(ctx, Candidate, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, 3, got)
+
+	got, err = m.Get(ctx, Candidate, "a/9")
+	require.NoError(t, err)
+	assert.Equal(t, 9, got)
+
+	changes, err := m.Diff(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []Change{
+		{Op: OpUpdate, Path: "a/1", Old: 1, New: 3},
+		{Op: OpCreate, Path: "a/9", New: 9},
+	}, changes)
+}
+
+func TestMemoryRestorePersistsStartup(t *testing.T) {
+	ctx := context.Background()
+	m, path := newPersistentMemory(t)
+	set(t, m, Running, "a/1", uint32(42))
+
+	snapshot, err := m.Snapshot(ctx)
+	require.NoError(t, err)
+
+	set(t, m, Candidate, "a/1", uint32(7))
+	require.NoError(t, m.Commit(ctx))
+	require.NoError(t, m.Restore(ctx, snapshot))
+
+	values, err := Load(ctx, path)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"a/1": uint32(42)}, values)
+
+	got, err := m.Get(ctx, Running, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, uint32(42), got)
+}
+
+func TestMemoryRestorePersistFailureLeavesRunning(t *testing.T) {
+	ctx := context.Background()
+	// A directory is not writable with os.WriteFile, so the restore must fail
+	// before running is swapped.
+	m := NewMemory(Options{StartupFile: t.TempDir()})
+	set(t, m, Running, "a/1", 2)
+	snapshot, err := m.Snapshot(ctx)
+	require.NoError(t, err)
+
+	set(t, m, Running, "a/1", 1)
+	err = m.Restore(ctx, snapshot)
+
+	require.Error(t, err)
+
+	got, getErr := m.Get(ctx, Running, "a/1")
+	require.NoError(t, getErr)
+	assert.Equal(t, 1, got, "running must stay untouched")
 }
 
 func TestMemoryRollback(t *testing.T) {

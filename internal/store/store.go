@@ -77,6 +77,9 @@ type Change struct {
 //   - Diff reports the candidate changes a commit would apply.
 //   - Commit validates candidate, applies it to running and persists startup.
 //   - Rollback discards candidate and copies running back into it.
+//   - Snapshot copies running aside, and Restore puts that copy back. Together
+//     they are how NETCONF reverts an unconfirmed confirmed commit
+//     (RFC 6241 §8.4.1).
 //
 // Read-only enforcement (nodes tagged config:"false") belongs to
 // internal/router, not to the store. Implementations must be safe for
@@ -96,4 +99,11 @@ type Store interface {
 	Commit(ctx context.Context) error
 	// Rollback discards candidate changes, restoring it from running.
 	Rollback(ctx context.Context) error
+	// Snapshot returns a detached copy of the whole running datastore. The
+	// caller may keep it while running changes and pass it to Restore.
+	Snapshot(ctx context.Context) (map[string]any, error)
+	// Restore replaces running with values, persists them as startup and
+	// leaves candidate untouched. values must come from Snapshot; it is how a
+	// confirmed commit is rolled back (RFC 6241 §8.4.1).
+	Restore(ctx context.Context, values map[string]any) error
 }

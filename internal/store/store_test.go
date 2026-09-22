@@ -23,6 +23,10 @@ func (stub) List(context.Context, Datastore, string) ([]string, error) {
 func (stub) Diff(context.Context) ([]Change, error) { return nil, nil }
 func (stub) Commit(context.Context) error           { return nil }
 func (stub) Rollback(context.Context) error         { return nil }
+func (stub) Snapshot(context.Context) (map[string]any, error) {
+	return nil, nil
+}
+func (stub) Restore(context.Context, map[string]any) error { return nil }
 
 var _ Store = stub{}
 

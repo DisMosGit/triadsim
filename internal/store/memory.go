@@ -257,6 +257,45 @@ func (m *Memory) Rollback(ctx context.Context) error {
 	return nil
 }
 
+// Snapshot returns a copy of the running datastore. Leaf values are immutable
+// primitives, so the copy is fully detached from the store.
+func (m *Memory) Snapshot(ctx context.Context) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return copyValues(m.running), nil
+}
+
+// Restore replaces running with values and persists them as startup, leaving
+// candidate untouched. It is how a confirmed commit is rolled back.
+//
+// The startup file is written before running is swapped, so a failed write
+// leaves every datastore untouched. A snapshot of running is by definition a
+// valid configuration, so no validation is performed.
+func (m *Memory) Restore(ctx context.Context, values map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := copyValues(values)
+	if m.startupFile != "" {
+		if err := Save(ctx, m.startupFile, next); err != nil {
+			return fmt.Errorf("store: restore: %w", err)
+		}
+	}
+
+	m.running = next
+	m.startup = copyValues(next)
+	return nil
+}
+
 // LoadStartup loads the persisted startup datastore into running, candidate
 // and startup. It is a no-op when persistence is disabled or the file does not
 // exist yet, so it can be called unconditionally at boot.

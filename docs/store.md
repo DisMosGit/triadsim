@@ -48,6 +48,8 @@ type Store interface {
     Diff(ctx context.Context) ([]Change, error)
     Commit(ctx context.Context) error
     Rollback(ctx context.Context) error
+    Snapshot(ctx context.Context) (map[string]any, error)
+    Restore(ctx context.Context, values map[string]any) error
 }
 ```
 
@@ -64,7 +66,7 @@ lists the whole datastore. The prefix itself is never included, because the stor
 only, so `List(..., "a")` returns `a/1` but not `a`, and `List(..., "a/1")` returns nothing. The
 result is a fresh slice, so callers may keep it without aliasing the store.
 
-## Diff, commit and rollback
+## Diff, commit, rollback and restore
 
 - `Diff` compares candidate with running and reports one `Change` per path: `create` when the
   path exists only in candidate, `update` when the value differs, `delete` when it exists only
@@ -75,6 +77,16 @@ result is a fresh slice, so callers may keep it without aliasing the store.
   rejected candidate or a failed write leaves every datastore untouched. A validation failure is
   wrapped with `ErrValidation` so NETCONF can map it to `invalid-value`.
 - `Rollback` discards every candidate change by copying running back into candidate.
+- `Snapshot` returns a detached copy of running. It is taken **before** a confirmed commit, so
+  the configuration the client has not confirmed yet can be put back.
+- `Restore` puts a snapshot back: it replaces running, persists it as startup and leaves
+  candidate untouched (the uncommitted configuration survives and can be re-committed). Like
+  `Commit`, it writes the startup file before swapping running, and it does not validate, because
+  a snapshot of running is by definition a configuration the device already accepted.
+
+NETCONF `commit` and RESTCONF write operations use this sequence; `discard-changes` is
+`Rollback`, and the rollback of an unconfirmed confirmed commit is `Restore`
+(see `docs/protocols/NETCONF.md`).
 
 Validation is injected, because the store has no schema knowledge: `NewMemory(Options{Validator:
 v})` takes a `Validator func(ctx context.Context, values map[string]any) error`. It receives a
@@ -82,9 +94,6 @@ copy of the candidate's flat path → leaf map, so it cannot mutate the store, a
 the store lock while calling it — the snapshot exists so the validator never calls back into the
 same `Memory`. A nil `Validator` accepts every candidate; the router wires the real one in
 Phase 1.6.
-
-NETCONF `commit` and RESTCONF write operations use this sequence; `discard-changes` is
-`Rollback`.
 
 ## Read-only nodes
 
