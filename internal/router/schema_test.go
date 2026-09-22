@@ -34,9 +34,14 @@ func TestChildrenOfRoot(t *testing.T) {
 
 	children, err := r.Children("")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"system-info", "interfaces"}, nodeNames(children))
+	assert.Equal(t, []string{"system-info", "interfaces", "vlans", "mac-table", "stp", "lldp"}, nodeNames(children))
 	assert.Equal(t, KindContainer, findNode(t, children, "system-info").Kind)
 	assert.Equal(t, KindContainer, findNode(t, children, "interfaces").Kind)
+	assert.Equal(t, KindContainer, findNode(t, children, "vlans").Kind)
+	assert.Equal(t, KindContainer, findNode(t, children, "mac-table").Kind)
+	assert.Equal(t, KindContainer, findNode(t, children, "lldp").Kind)
+	// stp/state is one field with a two-segment tag: stp is the container.
+	assert.Equal(t, KindContainer, findNode(t, children, "stp").Kind)
 }
 
 func TestChildrenLeafKinds(t *testing.T) {

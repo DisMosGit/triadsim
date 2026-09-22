@@ -73,6 +73,70 @@ func DefaultDevice() *Device {
 				MACAddress: "02:00:00:00:00:02",
 			},
 		},
+		VLANs: []VLAN{defaultVLAN()},
+		MACTable: MACTable{
+			AgingTime:  DefaultMACAgingTime,
+			MaxEntries: 8192,
+			// The seeded static entry maps the eth1 MAC to its interface index.
+			CurrentCount: 1,
+			Entries: []MACEntry{{
+				MAC:       "02:00:00:00:00:02",
+				VLAN:      100,
+				Port:      3,
+				Type:      MACEntryTypeStatic,
+				Permanent: true,
+			}},
+		},
+		STP:  defaultSTPState(),
+		LLDP: defaultLLDPConfig(),
+	}
+}
+
+// DefaultMACAgingTime is the bridge aging timer of a freshly seeded device.
+const DefaultMACAgingTime uint32 = 300
+
+// defaultVLAN is the DATA VLAN of the seed: eth0 is an access member of it.
+func defaultVLAN() VLAN {
+	return VLAN{
+		ID:          100,
+		Name:        "DATA",
+		Description: "default data vlan",
+		Ports: []VLANPort{{
+			Port: "eth0",
+			Mode: VLANPortModeAccess,
+			PVID: 100,
+		}},
+	}
+}
+
+// defaultSTPState is the seeded RSTP state: eth0 forwards towards the root and
+// eth1 is an alternate port that discards.
+func defaultSTPState() STPState {
+	return STPState{
+		Enabled:        true,
+		Protocol:       STPProtocolRSTP,
+		BridgePriority: 32768,
+		BridgeAddress:  "02:00:00:00:00:01",
+		RootID:         "02:00:00:00:00:01",
+		RootCost:       0,
+		Ports: []STPPort{
+			{Port: "eth0", Role: STPPortRoleRoot, State: STPPortStateForwarding, Priority: 128, PathCost: 20000},
+			{Port: "eth1", Role: STPPortRoleAlternate, State: STPPortStateDiscarding, Priority: 128, PathCost: 20000},
+		},
+	}
+}
+
+// defaultLLDPConfig is the seeded LLDP configuration with no neighbours.
+func defaultLLDPConfig() LLDPConfig {
+	return LLDPConfig{
+		Enabled:           true,
+		TxInterval:        30,
+		TxHoldMultiplier:  4,
+		ReinitDelay:       2,
+		TxDelay:           2,
+		ChassisID:         "02:00:00:00:00:01",
+		SystemName:        "triadsim-01",
+		SystemDescription: "TriadSim simulated telecom device",
 	}
 }
 

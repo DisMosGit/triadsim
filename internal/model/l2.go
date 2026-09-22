@@ -36,6 +36,34 @@ const (
 	MACEntryTypeStatic  = "static"
 )
 
+// MAC-table bounds. The aging time follows the IEEE 802.1D suggestion of
+// 10 s to 10^6 s; max-entries and current-count are bounded by the same limit.
+const (
+	MACAgingTimeMin       uint32 = 10
+	MACAgingTimeMax       uint32 = 1000000
+	MACTableMaxEntriesMin uint32 = 1
+	MACTableMaxEntriesMax uint32 = 1000000
+)
+
+// C-TAG handling values of a QinQ port (IEEE 802.1ad).
+const (
+	CTagHandlingPush        = "push"
+	CTagHandlingPop         = "pop"
+	CTagHandlingTransparent = "transparent"
+)
+
+// LLDP bounds (IEEE 802.1AB defaults: tx-interval 30 s, hold multiplier 4).
+const (
+	LLDPTxIntervalMin  uint32 = 1
+	LLDPTxIntervalMax  uint32 = 3600
+	LLDPTxHoldMin      uint32 = 2
+	LLDPTxHoldMax      uint32 = 10
+	LLDPReinitDelayMin uint32 = 1
+	LLDPReinitDelayMax uint32 = 10
+	LLDPTxDelayMin     uint32 = 1
+	LLDPTxDelayMax     uint32 = 10
+)
+
 // STP/RSTP protocol values.
 const (
 	STPProtocolSTP  = "stp"
@@ -102,12 +130,42 @@ type VLAN struct {
 	Ports       []VLANPort `path:"ports/port" xml:"ports>port" json:"ports"`
 }
 
-// VLANPort is one member port of a VLAN.
+// VLANPort is one member port of a VLAN. QinQ (IEEE 802.1ad) pushes an outer
+// S-TAG with OuterVID on top of the customer C-TAG; the C-TAG is the port's
+// PVID for an access port.
 type VLANPort struct {
-	Port   string `path:"port" key:"true" xml:"port" json:"port"`
-	Mode   string `path:"mode" xml:"mode" json:"mode"`
-	PVID   uint16 `path:"pvid" xml:"pvid" json:"pvid"`
-	Tagged bool   `path:"tagged" xml:"tagged" json:"tagged"`
+	Port         string `path:"port" key:"true" xml:"port" json:"port"`
+	Mode         string `path:"mode" xml:"mode" json:"mode"`
+	PVID         uint16 `path:"pvid" xml:"pvid" json:"pvid"`
+	Tagged       bool   `path:"tagged" xml:"tagged" json:"tagged"`
+	QinQ         bool   `path:"qinq" xml:"qinq" json:"qinq"`
+	OuterVID     uint16 `path:"s-tag-vid" xml:"s-tag-vid,omitempty" json:"s-tag-vid,omitempty"`
+	CTagHandling string `path:"c-tag-handling" xml:"c-tag-handling,omitempty" json:"c-tag-handling,omitempty"`
+}
+
+// MACTable is the bridge forwarding database: the learned and static entries
+// plus the table parameters. Entries and current-count are read-only state;
+// aging-time and max-entries are configuration.
+type MACTable struct {
+	Entries      []MACEntry `path:"entry" creatable:"true" xml:"entry" json:"entry"`
+	AgingTime    uint32     `path:"aging-time" xml:"aging-time" json:"aging-time"`
+	MaxEntries   uint32     `path:"max-entries" xml:"max-entries" json:"max-entries"`
+	CurrentCount uint32     `path:"current-count" xml:"current-count" json:"current-count" config:"false"`
+}
+
+// LLDPConfig is the local LLDP configuration and the table of remote
+// neighbours. The neighbour table is a simplified management-plane model:
+// neighbours are configured or injected, never learned from the wire.
+type LLDPConfig struct {
+	Enabled           bool           `path:"enabled" xml:"enabled" json:"enabled"`
+	TxInterval        uint32         `path:"tx-interval" xml:"tx-interval" json:"tx-interval"`
+	TxHoldMultiplier  uint32         `path:"tx-hold-multiplier" xml:"tx-hold-multiplier" json:"tx-hold-multiplier"`
+	ReinitDelay       uint32         `path:"reinit-delay" xml:"reinit-delay" json:"reinit-delay"`
+	TxDelay           uint32         `path:"tx-delay" xml:"tx-delay" json:"tx-delay"`
+	ChassisID         string         `path:"chassis-id" xml:"chassis-id" json:"chassis-id"`
+	SystemName        string         `path:"system-name" xml:"system-name" json:"system-name"`
+	SystemDescription string         `path:"system-description" xml:"system-description,omitempty" json:"system-description,omitempty"`
+	Neighbors         []LLDPNeighbor `path:"neighbors/neighbor" creatable:"true" xml:"neighbors>neighbor" json:"neighbors"`
 }
 
 // MACEntry is one entry of the MAC forwarding database.
@@ -216,6 +274,37 @@ func (p VLANPort) Validate() error {
 	if p.Mode == VLANPortModeAccess && p.Tagged {
 		return fmt.Errorf("port %s: access mode must not be tagged", p.Port)
 	}
+	if err := p.validateQinQ(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateQinQ checks the stacked-tag configuration of one port: a QinQ port
+// pushes a valid outer tag that differs from the inner (PVID) tag and names a
+// C-TAG handling mode; a plain port must leave both fields unset.
+func (p VLANPort) validateQinQ() error {
+	if !p.QinQ {
+		if p.OuterVID != 0 {
+			return fmt.Errorf("port %s: s-tag-vid %d requires qinq", p.Port, p.OuterVID)
+		}
+		if p.CTagHandling != "" {
+			return fmt.Errorf("port %s: c-tag-handling %q requires qinq", p.Port, p.CTagHandling)
+		}
+		return nil
+	}
+	if p.OuterVID < VLANIDMin || p.OuterVID > VLANIDMax {
+		return fmt.Errorf("port %s: s-tag-vid %d out of range %d..%d", p.Port, p.OuterVID, VLANIDMin, VLANIDMax)
+	}
+	if p.OuterVID == p.PVID {
+		return fmt.Errorf("port %s: s-tag-vid %d must differ from the inner pvid", p.Port, p.OuterVID)
+	}
+	switch p.CTagHandling {
+	case CTagHandlingPush, CTagHandlingPop, CTagHandlingTransparent:
+	default:
+		return fmt.Errorf("port %s: unknown c-tag-handling %q (want %s, %s or %s)",
+			p.Port, p.CTagHandling, CTagHandlingPush, CTagHandlingPop, CTagHandlingTransparent)
+	}
 	return nil
 }
 
@@ -237,6 +326,66 @@ func (m MACEntry) Validate() error {
 	}
 	if m.Permanent && m.Type != MACEntryTypeStatic {
 		return fmt.Errorf("permanent entry must have type %s", MACEntryTypeStatic)
+	}
+	return nil
+}
+
+// Validate checks the table parameters and every entry.
+func (m MACTable) Validate() error {
+	if m.AgingTime < MACAgingTimeMin || m.AgingTime > MACAgingTimeMax {
+		return fmt.Errorf("aging-time %d out of range %d..%d", m.AgingTime, MACAgingTimeMin, MACAgingTimeMax)
+	}
+	if m.MaxEntries < MACTableMaxEntriesMin || m.MaxEntries > MACTableMaxEntriesMax {
+		return fmt.Errorf("max-entries %d out of range %d..%d",
+			m.MaxEntries, MACTableMaxEntriesMin, MACTableMaxEntriesMax)
+	}
+	if m.CurrentCount > m.MaxEntries {
+		return fmt.Errorf("current-count %d exceeds max-entries %d", m.CurrentCount, m.MaxEntries)
+	}
+
+	seen := make(map[string]struct{}, len(m.Entries))
+	for i, entry := range m.Entries {
+		if err := entry.Validate(); err != nil {
+			return fmt.Errorf("entry[%d]: %w", i, err)
+		}
+		// The forwarding database is addressed by MAC address alone, so the
+		// same MAC cannot appear twice even in different VLANs.
+		if _, dup := seen[entry.MAC]; dup {
+			return fmt.Errorf("entry[%d]: duplicate mac-address %s", i, entry.MAC)
+		}
+		seen[entry.MAC] = struct{}{}
+	}
+	return nil
+}
+
+// Validate checks the LLDP parameters and every remote neighbour.
+func (c LLDPConfig) Validate() error {
+	if c.TxInterval < LLDPTxIntervalMin || c.TxInterval > LLDPTxIntervalMax {
+		return fmt.Errorf("tx-interval %d out of range %d..%d", c.TxInterval, LLDPTxIntervalMin, LLDPTxIntervalMax)
+	}
+	if c.TxHoldMultiplier < LLDPTxHoldMin || c.TxHoldMultiplier > LLDPTxHoldMax {
+		return fmt.Errorf("tx-hold-multiplier %d out of range %d..%d",
+			c.TxHoldMultiplier, LLDPTxHoldMin, LLDPTxHoldMax)
+	}
+	if c.ReinitDelay < LLDPReinitDelayMin || c.ReinitDelay > LLDPReinitDelayMax {
+		return fmt.Errorf("reinit-delay %d out of range %d..%d", c.ReinitDelay, LLDPReinitDelayMin, LLDPReinitDelayMax)
+	}
+	if c.TxDelay < LLDPTxDelayMin || c.TxDelay > LLDPTxDelayMax {
+		return fmt.Errorf("tx-delay %d out of range %d..%d", c.TxDelay, LLDPTxDelayMin, LLDPTxDelayMax)
+	}
+	if c.ChassisID == "" {
+		return errors.New("chassis-id must not be empty")
+	}
+
+	seen := make(map[string]struct{}, len(c.Neighbors))
+	for i, neighbor := range c.Neighbors {
+		if err := neighbor.Validate(); err != nil {
+			return fmt.Errorf("neighbors[%d]: %w", i, err)
+		}
+		if _, dup := seen[neighbor.Port]; dup {
+			return fmt.Errorf("neighbors[%d]: duplicate neighbour on port %s", i, neighbor.Port)
+		}
+		seen[neighbor.Port] = struct{}{}
 	}
 	return nil
 }

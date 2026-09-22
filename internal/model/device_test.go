@@ -19,13 +19,7 @@ func validSystemInfo() SystemInfo {
 }
 
 func validDevice() Device {
-	return Device{
-		SystemInfo: validSystemInfo(),
-		Interfaces: []Interface{
-			validInterfaceRadio(),
-			validInterfaceEthernet(),
-		},
-	}
+	return *DefaultDevice()
 }
 
 func TestSystemInfoValidate(t *testing.T) {
@@ -78,6 +72,13 @@ func TestDeviceValidate(t *testing.T) {
 			d.Interfaces = []Interface{validInterfaceEthernet()}
 			d.Interfaces[0].MTU = 0
 		}, wantErr: true},
+		{name: "invalid vlan", mutate: func(d *Device) { d.VLANs[0].ID = 0 }, wantErr: true},
+		{name: "duplicate vlan id", mutate: func(d *Device) {
+			d.VLANs = append(d.VLANs, d.VLANs[0])
+		}, wantErr: true},
+		{name: "invalid mac table", mutate: func(d *Device) { d.MACTable.AgingTime = 0 }, wantErr: true},
+		{name: "invalid stp", mutate: func(d *Device) { d.STP.Protocol = "mstp" }, wantErr: true},
+		{name: "invalid lldp", mutate: func(d *Device) { d.LLDP.TxInterval = 0 }, wantErr: true},
 	}
 
 	for _, tt := range tests {

@@ -158,6 +158,26 @@ func TestVLANPortValidate(t *testing.T) {
 		{name: "pvid zero", mutate: func(p *VLANPort) { p.PVID = 0 }, wantErr: true},
 		{name: "pvid above maximum", mutate: func(p *VLANPort) { p.PVID = 4095 }, wantErr: true},
 		{name: "access tagged", mutate: func(p *VLANPort) { p.Tagged = true }, wantErr: true},
+		{name: "valid qinq", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, 200, CTagHandlingPush
+		}},
+		{name: "qinq transparent", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, 200, CTagHandlingTransparent
+		}},
+		{name: "qinq outer equals inner", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, p.PVID, CTagHandlingPush
+		}, wantErr: true},
+		{name: "qinq outer zero", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, 0, CTagHandlingPush
+		}, wantErr: true},
+		{name: "qinq outer above maximum", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, 4095, CTagHandlingPush
+		}, wantErr: true},
+		{name: "qinq unknown c-tag handling", mutate: func(p *VLANPort) {
+			p.QinQ, p.OuterVID, p.CTagHandling = true, 200, "swap"
+		}, wantErr: true},
+		{name: "outer vid without qinq", mutate: func(p *VLANPort) { p.OuterVID = 200 }, wantErr: true},
+		{name: "c-tag handling without qinq", mutate: func(p *VLANPort) { p.CTagHandling = CTagHandlingPush }, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -308,6 +328,100 @@ func TestLLDPNeighborValidate(t *testing.T) {
 			tt.mutate(&neighbor)
 
 			err := neighbor.Validate()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestMACTableValidate(t *testing.T) {
+	table := func() MACTable {
+		return MACTable{
+			AgingTime:    DefaultMACAgingTime,
+			MaxEntries:   8192,
+			CurrentCount: 1,
+			Entries:      []MACEntry{validMACEntry()},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*MACTable)
+		wantErr bool
+	}{
+		{name: "valid", mutate: func(*MACTable) {}},
+		{name: "no entries", mutate: func(m *MACTable) { m.Entries, m.CurrentCount = nil, 0 }},
+		{name: "aging at minimum", mutate: func(m *MACTable) { m.AgingTime = MACAgingTimeMin }},
+		{name: "aging at maximum", mutate: func(m *MACTable) { m.AgingTime = MACAgingTimeMax }},
+		{name: "aging below minimum", mutate: func(m *MACTable) { m.AgingTime = 9 }, wantErr: true},
+		{name: "aging above maximum", mutate: func(m *MACTable) { m.AgingTime = MACAgingTimeMax + 1 }, wantErr: true},
+		{name: "max entries zero", mutate: func(m *MACTable) { m.MaxEntries = 0 }, wantErr: true},
+		{name: "current count above max", mutate: func(m *MACTable) { m.CurrentCount = m.MaxEntries + 1 }, wantErr: true},
+		{name: "invalid entry", mutate: func(m *MACTable) { m.Entries[0].Port = 0 }, wantErr: true},
+		{name: "duplicate mac", mutate: func(m *MACTable) { m.Entries = append(m.Entries, m.Entries[0]) }, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := table()
+			tt.mutate(&value)
+
+			err := value.Validate()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestLLDPConfigValidate(t *testing.T) {
+	config := func() LLDPConfig {
+		return LLDPConfig{
+			Enabled:          true,
+			TxInterval:       30,
+			TxHoldMultiplier: 4,
+			ReinitDelay:      2,
+			TxDelay:          2,
+			ChassisID:        "02:00:00:00:00:01",
+			SystemName:       "triadsim-01",
+			Neighbors:        []LLDPNeighbor{validLLDPNeighbor()},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*LLDPConfig)
+		wantErr bool
+	}{
+		{name: "valid", mutate: func(*LLDPConfig) {}},
+		{name: "disabled still checks ranges", mutate: func(c *LLDPConfig) { c.Enabled = false }},
+		{name: "tx interval at minimum", mutate: func(c *LLDPConfig) { c.TxInterval = LLDPTxIntervalMin }},
+		{name: "tx interval at maximum", mutate: func(c *LLDPConfig) { c.TxInterval = LLDPTxIntervalMax }},
+		{name: "tx interval zero", mutate: func(c *LLDPConfig) { c.TxInterval = 0 }, wantErr: true},
+		{name: "hold multiplier below minimum", mutate: func(c *LLDPConfig) { c.TxHoldMultiplier = 1 }, wantErr: true},
+		{name: "hold multiplier above maximum", mutate: func(c *LLDPConfig) { c.TxHoldMultiplier = 11 }, wantErr: true},
+		{name: "reinit delay zero", mutate: func(c *LLDPConfig) { c.ReinitDelay = 0 }, wantErr: true},
+		{name: "tx delay above maximum", mutate: func(c *LLDPConfig) { c.TxDelay = 11 }, wantErr: true},
+		{name: "empty chassis id", mutate: func(c *LLDPConfig) { c.ChassisID = "" }, wantErr: true},
+		{name: "invalid neighbour", mutate: func(c *LLDPConfig) { c.Neighbors[0].TTL = 0 }, wantErr: true},
+		{name: "duplicate neighbour port", mutate: func(c *LLDPConfig) {
+			c.Neighbors = append(c.Neighbors, c.Neighbors[0])
+		}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := config()
+			tt.mutate(&value)
+
+			err := value.Validate()
 
 			if tt.wantErr {
 				require.Error(t, err)

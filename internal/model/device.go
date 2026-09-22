@@ -5,12 +5,17 @@ import (
 	"fmt"
 )
 
-// Device is the root managed object: the system information and the interface
-// list. Router paths start here, for example
-// interfaces/interface[name=radio0]/radio-link/tx-power.
+// Device is the root managed object: the system information, the interface
+// list and the L2 switching state. Router paths start here, for example
+// interfaces/interface[name=radio0]/radio-link/tx-power or
+// vlans/vlan[id=100]/name.
 type Device struct {
 	SystemInfo SystemInfo  `path:"system-info" xml:"system-info" json:"system-info"`
 	Interfaces []Interface `path:"interfaces/interface" xml:"interfaces>interface" json:"interfaces"`
+	VLANs      []VLAN      `path:"vlans/vlan" creatable:"true" xml:"vlans>vlan" json:"vlans"`
+	MACTable   MACTable    `path:"mac-table" xml:"mac-table" json:"mac-table"`
+	STP        STPState    `path:"stp/state" xml:"stp>state" json:"stp"`
+	LLDP       LLDPConfig  `path:"lldp" xml:"lldp" json:"lldp"`
 }
 
 // SystemInfo is the device identity reported to every management plane. The
@@ -32,8 +37,9 @@ func (s SystemInfo) Validate() error {
 	return nil
 }
 
-// Validate checks the system information and every interface, and rejects
-// duplicate interface names.
+// Validate checks the system information, every interface, the VLAN list, the
+// MAC table, the STP state and the LLDP configuration, and rejects duplicate
+// interface names and VLAN ids.
 func (d Device) Validate() error {
 	if err := d.SystemInfo.Validate(); err != nil {
 		return fmt.Errorf("system-info: %w", err)
@@ -48,6 +54,27 @@ func (d Device) Validate() error {
 			return fmt.Errorf("interfaces[%d]: duplicate interface %q", i, iface.Name)
 		}
 		seen[iface.Name] = struct{}{}
+	}
+
+	vlanIDs := make(map[uint16]struct{}, len(d.VLANs))
+	for i, vlan := range d.VLANs {
+		if err := vlan.Validate(); err != nil {
+			return fmt.Errorf("vlans[%d]: %w", i, err)
+		}
+		if _, dup := vlanIDs[vlan.ID]; dup {
+			return fmt.Errorf("vlans[%d]: duplicate vlan id %d", i, vlan.ID)
+		}
+		vlanIDs[vlan.ID] = struct{}{}
+	}
+
+	if err := d.MACTable.Validate(); err != nil {
+		return fmt.Errorf("mac-table: %w", err)
+	}
+	if err := d.STP.Validate(); err != nil {
+		return fmt.Errorf("stp: %w", err)
+	}
+	if err := d.LLDP.Validate(); err != nil {
+		return fmt.Errorf("lldp: %w", err)
 	}
 	return nil
 }
