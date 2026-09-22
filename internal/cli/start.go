@@ -14,6 +14,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/clock"
 	"github.com/DisMosGit/triadsim/internal/config"
 	"github.com/DisMosGit/triadsim/internal/event"
+	"github.com/DisMosGit/triadsim/internal/gnmi"
 	"github.com/DisMosGit/triadsim/internal/l2"
 	"github.com/DisMosGit/triadsim/internal/log"
 	"github.com/DisMosGit/triadsim/internal/metrics"
@@ -42,6 +43,7 @@ type runtimeDeps struct {
 	netconfAddr  string
 	restconfAddr string
 	metricsAddr  string
+	gnmiAddr     string
 	startupFile  string
 }
 
@@ -191,16 +193,42 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	}
 	defer func() { _ = restconfServer.Close() }()
 
-	serveErr := make(chan error, 3)
+	// The gNMI service is optional: it only listens when the configuration
+	// enables it, and it keeps its own TLS-off listener like the other planes.
+	var gnmiServer *gnmi.Server
+	if cfg.GNMI.Enabled {
+		gnmiServer = gnmi.New(r, st, bus, gnmi.Options{
+			Addr:  deps.gnmiAddr,
+			Port:  cfg.GNMI.Port,
+			Clock: clock.RealClock{},
+		})
+		if err := gnmiServer.Listen(); err != nil {
+			_ = server.Close()
+			_ = agent.Close()
+			_ = netconfServer.Close()
+			_ = restconfServer.Close()
+			return fmt.Errorf("setup gnmi: %w", err)
+		}
+		defer func() { _ = gnmiServer.Close() }()
+	}
+
+	serveErr := make(chan error, 4)
 	go func() { serveErr <- agent.Serve(ctx) }()
 	go func() { serveErr <- netconfServer.Serve(ctx) }()
 	go func() { serveErr <- restconfServer.Serve(ctx) }()
+	if gnmiServer != nil {
+		go func() { serveErr <- gnmiServer.Serve(ctx) }()
+	}
 	go l2Manager.Run(ctx)
 	go syncManager.Run(ctx)
 	go radioManager.Run(ctx)
 	go trapSender.Run(ctx)
 	go runUptime(ctx, r)
 
+	gnmiAddr := ""
+	if gnmiServer != nil {
+		gnmiAddr = gnmiServer.Addr().String()
+	}
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
 		"device_id", device.SystemInfo.DeviceID,
@@ -212,6 +240,8 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		"restconf_port", cfg.RESTCONF.Port,
 		"metrics_port", cfg.Metrics.Port,
 		"gnmi_enabled", cfg.GNMI.Enabled,
+		"gnmi_port", cfg.GNMI.Port,
+		"gnmi_addr", gnmiAddr,
 		"log_level", cfg.Log.Level,
 		"startup_file", startupFile,
 		"snmp_addr", agent.Addr().String(),

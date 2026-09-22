@@ -47,6 +47,7 @@ type simulator struct {
 	netconfAddr string
 	restconfURL string
 	metricsURL  string
+	gnmiAddr    string
 }
 
 var (
@@ -106,6 +107,9 @@ restconf:
   port: 8080
 metrics:
   port: 9090
+gnmi:
+  enabled: true
+  port: 9339
 log:
   level: info
 startup:
@@ -121,7 +125,7 @@ startup:
 			testcontainers.BindMount(configPath, "/config.yaml"),
 			testcontainers.BindMount(dataDir, "/data"),
 		},
-		ExposedPorts: []string{"1161/udp", "1830/tcp", "8080/tcp", "9090/tcp"},
+		ExposedPorts: []string{"1161/udp", "1830/tcp", "8080/tcp", "9090/tcp", "9339/tcp"},
 		// The container reaches the host's trap receiver through the gateway.
 		ExtraHosts: []string{testcontainers.HostInternal + ":host-gateway"},
 		WaitingFor: wait.ForListeningPort("8080/tcp").WithStartupTimeout(startupTimeout),
@@ -141,6 +145,7 @@ startup:
 	netconfPort := mappedPort(t, container, "1830/tcp")
 	restconfPort := mappedPort(t, container, "8080/tcp")
 	metricsPort := mappedPort(t, container, "9090/tcp")
+	gnmiPort := mappedPort(t, container, "9339/tcp")
 
 	return &simulator{
 		container:   container,
@@ -148,6 +153,7 @@ startup:
 		netconfAddr: net.JoinHostPort(host, fmt.Sprint(netconfPort)),
 		restconfURL: "http://" + net.JoinHostPort(host, fmt.Sprint(restconfPort)),
 		metricsURL:  "http://" + net.JoinHostPort(host, fmt.Sprint(metricsPort)),
+		gnmiAddr:    net.JoinHostPort(host, fmt.Sprint(gnmiPort)),
 	}
 }
 

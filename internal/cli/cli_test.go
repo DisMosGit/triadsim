@@ -14,9 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openconfig/gnmi/proto/gnmi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/DisMosGit/triadsim/internal/store"
 )
@@ -66,6 +69,7 @@ func testDeps(t *testing.T) runtimeDeps {
 		netconfAddr:  "127.0.0.1:0",
 		restconfAddr: "127.0.0.1:0",
 		metricsAddr:  "127.0.0.1:0",
+		gnmiAddr:     "127.0.0.1:0",
 		startupFile:  filepath.Join(t.TempDir(), "startup.json"),
 	}
 }
@@ -158,6 +162,7 @@ func TestRunLogsStartAndStop(t *testing.T) {
 	assert.Equal(t, float64(8080), start["restconf_port"])
 	assert.Equal(t, float64(9090), start["metrics_port"])
 	assert.Equal(t, false, start["gnmi_enabled"])
+	assert.Empty(t, start["gnmi_addr"], "a disabled gNMI service must not listen")
 	assert.Equal(t, "debug", start["log_level"])
 	assert.Equal(t, "sim-001", start["device_id"])
 	assert.NotEmpty(t, start["netconf_addr"])
@@ -354,6 +359,32 @@ func TestRunServesNetconfSubsystem(t *testing.T) {
 	assert.Contains(t, message.String(), "<hello")
 	assert.Contains(t, message.String(), "urn:ietf:params:netconf:base:1.1")
 	assert.Contains(t, message.String(), "<session-id>")
+}
+
+func TestRunServesGnmiWhenEnabled(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "gnmi:\n  enabled: true\n  port: 19339\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	start := waitForRecord(t, out, "simulator starting")
+	assert.Equal(t, true, start["gnmi_enabled"])
+	address, ok := start["gnmi_addr"].(string)
+	require.True(t, ok, "the startup record must carry gnmi_addr")
+	require.NotEmpty(t, address)
+
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	response, err := gnmi.NewGNMIClient(conn).Capabilities(context.Background(), &gnmi.CapabilityRequest{})
+	require.NoError(t, err)
+	assert.Len(t, response.GetSupportedModels(), 4)
 }
 
 // decodeRecords parses newline-delimited JSON records from data.
