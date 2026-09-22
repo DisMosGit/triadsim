@@ -58,6 +58,16 @@ type SyncSimulator interface {
 	SyncLoss(ctx context.Context, source string) (string, error)
 }
 
+// RadioSimulator injects a radio-link failure and its restore. It is satisfied
+// by the radio domain; a nil RadioSimulator answers with
+// operation-not-supported.
+type RadioSimulator interface {
+	// RadioFailure injects a fade into a link and returns its new link state.
+	RadioFailure(ctx context.Context, link string, fadeDB float64) (string, error)
+	// RadioRestore clears the injected fade of a link and returns its state.
+	RadioRestore(ctx context.Context, link string) (string, error)
+}
+
 // Options configures a Server. Addr wins over Port when both are set; an empty
 // Addr means ":Port".
 type Options struct {
@@ -69,6 +79,8 @@ type Options struct {
 	Storm StormSimulator
 	// Sync receives the synchronization simulation endpoint's requests.
 	Sync SyncSimulator
+	// Radio receives the radio-link simulation endpoint's requests.
+	Radio RadioSimulator
 }
 
 // Server serves RESTCONF over HTTP. It owns one TCP listener; every request is
@@ -165,6 +177,8 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("/api/simulate/l2-storm", s.handleStorm)
 	mux.HandleFunc("/api/simulate/sync-loss", s.handleSyncLoss)
+	mux.HandleFunc("/api/simulate/radio-failure", s.handleRadioFailure)
+	mux.HandleFunc("/api/simulate/radio-restore", s.handleRadioRestore)
 
 	return mux
 }
@@ -362,13 +376,8 @@ func (s *Server) handleStorm(w http.ResponseWriter, r *http.Request) {
 		Port    string `json:"port"`
 		Packets uint32 `json:"packets"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&request); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			s.writeError(w, r, tooLarge("request body exceeds the %d byte limit", maxBodyBytes))
-			return
-		}
-		s.writeError(w, r, malformedRequest("malformed request body: %v", err))
+	if httpErr := s.decodeJSON(w, r, &request); httpErr != nil {
+		s.writeError(w, r, httpErr)
 		return
 	}
 	if request.Port == "" {
@@ -402,13 +411,8 @@ func (s *Server) handleSyncLoss(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Port string `json:"port"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&request); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			s.writeError(w, r, tooLarge("request body exceeds the %d byte limit", maxBodyBytes))
-			return
-		}
-		s.writeError(w, r, malformedRequest("malformed request body: %v", err))
+	if httpErr := s.decodeJSON(w, r, &request); httpErr != nil {
+		s.writeError(w, r, httpErr)
 		return
 	}
 
@@ -421,6 +425,90 @@ func (s *Server) handleSyncLoss(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", MediaTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "port": request.Port, "state": state})
+}
+
+// handleRadioFailure implements POST /api/simulate/radio-failure: it injects a
+// fade into a radio link, so the link budget, the fade margin and the
+// radioLinkDown/radioLinkDegraded alarms reflect a failing link. An empty link
+// selects the device's first radio link and an absent or zero fade-db the
+// domain's default failure depth.
+func (s *Server) handleRadioFailure(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, methodNotAllowed(http.MethodPost))
+		return
+	}
+	if s.opts.Radio == nil {
+		s.writeError(w, r, notImplemented(r.URL.Path))
+		return
+	}
+
+	var request struct {
+		Link   string  `json:"link"`
+		FadeDB float64 `json:"fade-db"`
+	}
+	if httpErr := s.decodeJSON(w, r, &request); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+	if request.FadeDB < 0 {
+		s.writeError(w, r, invalidValue("fade-db must not be negative"))
+		return
+	}
+
+	state, err := s.opts.Radio.RadioFailure(r.Context(), request.Link, request.FadeDB)
+	if err != nil {
+		s.writeError(w, r, newHTTPError(http.StatusUnprocessableEntity, errorTypeProtocol, "invalid-value", "%v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", MediaTypeJSON)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "link": request.Link, "state": state})
+}
+
+// handleRadioRestore implements POST /api/simulate/radio-restore: it clears the
+// fade a simulation injected into a radio link.
+func (s *Server) handleRadioRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, methodNotAllowed(http.MethodPost))
+		return
+	}
+	if s.opts.Radio == nil {
+		s.writeError(w, r, notImplemented(r.URL.Path))
+		return
+	}
+
+	var request struct {
+		Link string `json:"link"`
+	}
+	if httpErr := s.decodeJSON(w, r, &request); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+
+	state, err := s.opts.Radio.RadioRestore(r.Context(), request.Link)
+	if err != nil {
+		s.writeError(w, r, newHTTPError(http.StatusUnprocessableEntity, errorTypeProtocol, "invalid-value", "%v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", MediaTypeJSON)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "link": request.Link, "state": state})
+}
+
+// decodeJSON reads a simulation request body into out, applying the shared body
+// limit and reporting the shared error documents.
+func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, out any) *httpError {
+	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(out)
+	if err == nil {
+		return nil
+	}
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		return tooLarge("request body exceeds the %d byte limit", maxBodyBytes)
+	}
+	return malformedRequest("malformed request body: %v", err)
 }
 
 // mediaTypeOf returns the content type of a format.

@@ -18,6 +18,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/metrics"
 	"github.com/DisMosGit/triadsim/internal/model"
 	"github.com/DisMosGit/triadsim/internal/netconf"
+	"github.com/DisMosGit/triadsim/internal/radio"
 	"github.com/DisMosGit/triadsim/internal/restconf"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/snmp"
@@ -113,6 +114,11 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		return fmt.Errorf("setup sync domain: %w", err)
 	}
 
+	radioManager, err := radio.New(radio.Deps{Router: r, Bus: bus, Clock: clock.RealClock{}})
+	if err != nil {
+		return fmt.Errorf("setup radio domain: %w", err)
+	}
+
 	m := metrics.New(clock.RealClock{}, time.Now())
 
 	metricsAddr := deps.metricsAddr
@@ -153,6 +159,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		Port:  cfg.RESTCONF.Port,
 		Storm: l2Manager,
 		Sync:  syncManager,
+		Radio: radioManager,
 	})
 	if err := restconfServer.Listen(); err != nil {
 		_ = server.Close()
@@ -168,6 +175,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	go func() { serveErr <- restconfServer.Serve(ctx) }()
 	go l2Manager.Run(ctx)
 	go syncManager.Run(ctx)
+	go radioManager.Run(ctx)
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
