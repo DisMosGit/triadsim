@@ -90,14 +90,28 @@ func (sess *session) run(ctx context.Context) {
 		}
 		message, err := sess.reader.ReadMessage()
 		if err != nil {
-			if !errors.Is(err, io.EOF) && ctx.Err() == nil {
-				slog.DebugContext(ctx, "netconf: reading message failed", "session_id", sess.id, "error", err)
-			}
+			sess.reportReadError(ctx, err)
 			return
 		}
 		if !sess.handleMessage(ctx, bytes.TrimSpace(message)) {
 			return
 		}
+	}
+}
+
+// reportReadError answers a transport-level read failure. Broken framing and an
+// oversized message are malformed messages (RFC 6241 §7.1), so they are reported
+// as an <rpc-error> before the session ends; an ordinary EOF is silent.
+func (sess *session) reportReadError(ctx context.Context, err error) {
+	switch {
+	case errors.Is(err, errMessageTooBig):
+		sess.writeReply(ctx, errorReply("", ops.TooBig("message exceeds %d bytes", maxMessageSize)))
+	case errors.Is(err, errMalformedFrame):
+		sess.writeReply(ctx, errorReply("", ops.Malformed("%v", err)))
+	}
+
+	if !errors.Is(err, io.EOF) && ctx.Err() == nil {
+		slog.DebugContext(ctx, "netconf: reading message failed", "session_id", sess.id, "error", err)
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/DisMosGit/triadsim/internal/netconf/ops"
 )
 
 // sessionIO is one client-side view of a NETCONF session.
@@ -108,10 +110,38 @@ func TestSessionAcceptsChunkedHello(t *testing.T) {
 	// chunked framing for the rest of the session.
 	sendHello(t, io, framingChunked, CapabilityBase11, CapabilityBase10)
 
-	// A malformed chunk header is a framing error in chunked mode, so the
-	// server ends the session.
+	// A well-formed chunked message is answered in the same framing.
+	send(t, io, framingChunked, `<rpc message-id="1"><close-session/></rpc>`)
+	reply := readReply(t, io, framingChunked)
+	require.NotNil(t, reply.Child("ok"))
+}
+
+func TestSessionReportsBrokenFraming(t *testing.T) {
+	r, st := newTestStore(t)
+	srv := startTestServer(t, r, st, nil)
+	io, _ := openNetconfSession(t, dialSSH(t, srv.Addr().String()))
+	sendHello(t, io, framingChunked, CapabilityBase11, CapabilityBase10)
+
+	// A malformed chunk header is a framing error: the server answers
+	// malformed-message and ends the session.
 	require.NoError(t, writeRaw(io.channel, "\n#zz\n"))
 
+	reply := readReply(t, io, framingChunked)
+	assert.Equal(t, ops.TagMalformedMessage, errorTag(t, reply))
+	expectSessionClosed(t, io)
+}
+
+func TestSessionReportsOversizedFrames(t *testing.T) {
+	r, st := newTestStore(t)
+	srv := startTestServer(t, r, st, nil)
+	io, _ := openNetconfSession(t, dialSSH(t, srv.Addr().String()))
+	sendHello(t, io, framingChunked, CapabilityBase11, CapabilityBase10)
+
+	// The chunk header claims more than maxMessageSize bytes.
+	require.NoError(t, writeRaw(io.channel, "\n#ffffffff\n"))
+
+	reply := readReply(t, io, framingChunked)
+	assert.Equal(t, ops.TagTooBig, errorTag(t, reply))
 	expectSessionClosed(t, io)
 }
 
