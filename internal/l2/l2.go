@@ -48,6 +48,12 @@ type Deps struct {
 	// ForwardDelay is the listening and learning delay of the spanning-tree
 	// machine. Zero selects DefaultForwardDelay.
 	ForwardDelay time.Duration
+	// StormThresholdPPS is the broadcast rate above which the storm injector
+	// raises an alarm. Zero selects DefaultStormThresholdPPS.
+	StormThresholdPPS uint32
+	// StormWindow is the sliding window the storm rate is measured over. Zero
+	// selects DefaultStormWindow.
+	StormWindow time.Duration
 }
 
 // Manager implements the L2 switching domain: VLANs and QinQ, the MAC
@@ -59,11 +65,13 @@ type Deps struct {
 // measured state goes through Router.SetState, which also keeps candidate in
 // step.
 type Manager struct {
-	router       *router.Router
-	bus          *event.Bus
-	clock        clock.Clock
-	tickInterval time.Duration
-	forwardDelay time.Duration
+	router         *router.Router
+	bus            *event.Bus
+	clock          clock.Clock
+	tickInterval   time.Duration
+	forwardDelay   time.Duration
+	stormThreshold uint32
+	stormWindow    time.Duration
 
 	// mu serialises the read-modify-write cycles of the background work
 	// (aging, LLDP refresh, counter bumps) and storm accounting.
@@ -74,6 +82,10 @@ type Manager struct {
 	lastAging time.Time
 	// stpPending maps a bridge port to its next scheduled phase change.
 	stpPending map[string]stpDeadline
+	// stormSamples holds the injection window of every port the storm injector
+	// has driven, and stormAlarm the ports whose rate is above the threshold.
+	stormSamples map[string][]stormSample
+	stormAlarm   map[string]bool
 }
 
 // New builds the L2 domain manager. It fails when no router is supplied.
@@ -90,13 +102,23 @@ func New(deps Deps) (*Manager, error) {
 	if deps.ForwardDelay <= 0 {
 		deps.ForwardDelay = DefaultForwardDelay
 	}
+	if deps.StormThresholdPPS == 0 {
+		deps.StormThresholdPPS = DefaultStormThresholdPPS
+	}
+	if deps.StormWindow <= 0 {
+		deps.StormWindow = DefaultStormWindow
+	}
 	return &Manager{
-		router:       deps.Router,
-		bus:          deps.Bus,
-		clock:        deps.Clock,
-		tickInterval: deps.TickInterval,
-		forwardDelay: deps.ForwardDelay,
-		stpPending:   make(map[string]stpDeadline),
+		router:         deps.Router,
+		bus:            deps.Bus,
+		clock:          deps.Clock,
+		tickInterval:   deps.TickInterval,
+		forwardDelay:   deps.ForwardDelay,
+		stormThreshold: deps.StormThresholdPPS,
+		stormWindow:    deps.StormWindow,
+		stpPending:     make(map[string]stpDeadline),
+		stormSamples:   make(map[string][]stormSample),
+		stormAlarm:     make(map[string]bool),
 	}, nil
 }
 

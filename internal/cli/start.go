@@ -13,6 +13,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/clock"
 	"github.com/DisMosGit/triadsim/internal/config"
 	"github.com/DisMosGit/triadsim/internal/event"
+	"github.com/DisMosGit/triadsim/internal/l2"
 	"github.com/DisMosGit/triadsim/internal/log"
 	"github.com/DisMosGit/triadsim/internal/metrics"
 	"github.com/DisMosGit/triadsim/internal/model"
@@ -101,6 +102,11 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		return fmt.Errorf("seed device: %w", err)
 	}
 
+	l2Manager, err := l2.New(l2.Deps{Router: r, Bus: bus, Clock: clock.RealClock{}})
+	if err != nil {
+		return fmt.Errorf("setup l2 domain: %w", err)
+	}
+
 	m := metrics.New(clock.RealClock{}, time.Now())
 
 	metricsAddr := deps.metricsAddr
@@ -137,8 +143,9 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	defer func() { _ = netconfServer.Close() }()
 
 	restconfServer := restconf.New(r, st, bus, restconf.Options{
-		Addr: deps.restconfAddr,
-		Port: cfg.RESTCONF.Port,
+		Addr:  deps.restconfAddr,
+		Port:  cfg.RESTCONF.Port,
+		Storm: l2Manager,
 	})
 	if err := restconfServer.Listen(); err != nil {
 		_ = server.Close()
@@ -152,6 +159,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	go func() { serveErr <- agent.Serve(ctx) }()
 	go func() { serveErr <- netconfServer.Serve(ctx) }()
 	go func() { serveErr <- restconfServer.Serve(ctx) }()
+	go l2Manager.Run(ctx)
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
