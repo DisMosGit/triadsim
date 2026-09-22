@@ -2,7 +2,7 @@
 
 **Project:** TriadSim — Lightweight Telecom Equipment Simulator  
 **Protocol:** RESTCONF (RFC 8040)  
-**Transport:** HTTP/HTTPS over TCP  
+**Transport:** HTTP/1.1 over TCP (no TLS)  
 **Default Port:** 8080  
 **Base Path:** `/restconf`  
 **Data Encoding:** `application/yang-data+json`, `application/yang-data+xml`
@@ -15,12 +15,37 @@ RESTCONF is an HTTP-based protocol that provides a programmatic interface for ac
 
 TriadSim implements RESTCONF as one of its three northbound management interfaces, alongside SNMP and NETCONF. The protocol is defined in RFC 8040 (Standards Track, January 2017). Extensions for YANG Patch are defined in RFC 8072, and support for HTTP/2 transport is described in RFC 8700.
 
-RESTCONF in TriadSim is used for:
+### 1.1. Implementation status
 
-- **Configuration** — creating, replacing, modifying, and deleting data resources in the running and candidate datastores.
-- **Monitoring** — retrieving operational state, configuration data, and statistics.
-- **RPC invocation** — executing YANG `rpc` and `action` statements via POST.
-- **Event streams** — subscribing to server-sent event notifications.
+The implementation lives in `internal/restconf` (routing, media types, HTTP status mapping, the `ietf-restconf` error document), `internal/restconf/ops` (GET/PUT/PATCH/POST/DELETE against the store plus the JSON and XML codecs) and `internal/datatree` (the shared read/edit engine). It is a deliberately small subset of RFC 8040.
+
+**Implemented**
+
+- `GET`, `HEAD`, `PUT`, `PATCH`, `POST` and `DELETE` on `/restconf/data` — a resource, a list collection, a list entry or the whole datastore. Any other method gets `405 method-not-allowed` with an `Allow` header.
+- The two YANG data media types `application/yang-data+json` and `application/yang-data+xml`, for both request bodies and responses, selected by `Content-Type` and `Accept`. JSON is the default.
+- `?datastore=running|candidate|startup`, default `running`. A write is accepted on `running` and `candidate`; `startup` is read-only.
+- `?content=all|config|nonconfig`, default `all`.
+- The `ietf-restconf` error document (JSON) with `error-type`, `error-tag`, `error-path` and `error-message`.
+- `POST /api/simulate/l2-storm`, a simulator-specific endpoint (not part of RFC 8040) that injects a broadcast storm on one L2 port.
+
+**Not implemented**
+
+- No authentication, no authorization and no TLS. The server is plain `net.Listen("tcp", …)` behind `net/http`; every request is anonymous.
+- No YANG Patch (RFC 8072). `PATCH` accepts only a plain `application/yang-data+json` / `application/yang-data+xml` merge body.
+- No `depth`, `fields`, `filter`, `with-defaults` or `replay` query parameters. Only `datastore` and `content` are read; any other query parameter is ignored.
+- No `/restconf/operations` and no `/restconf/streams`. Both — including every sub-path — answer `501 operation-not-supported` for any method.
+- No `ietf-yang-library` (and therefore no `application/yang` schema retrieval).
+- No `application/yang-patch+json` or `application/yang-patch+xml` content type; such a request is `415 unsupported-media-type`.
+- No `/.well-known/host-meta` root-resource discovery.
+- No `OPTIONS`; it is answered with `405 method-not-allowed`.
+- HTTP/1.1 only. There is no HTTP/2, TLS or `h2c` support.
+
+Because of the two missing resource families, RESTCONF in TriadSim is used for configuration and monitoring only:
+
+- **Configuration** — creating, replacing, modifying and deleting data resources in the running and candidate datastores.
+- **Monitoring** — retrieving operational state, configuration data and statistics.
+
+RPC invocation and event streams are served by NETCONF, not by this RESTCONF server.
 
 ---
 
@@ -32,10 +57,10 @@ RESTCONF follows a client-server model over HTTP:
 
 | Role | Entity | Description |
 |---|---|---|
-| **RESTCONF client** | NMS, `curl`, custom tooling | Sends HTTP requests, receives responses and event streams |
-| **RESTCONF server** | TriadSim simulator | Serves YANG-defined resources, processes RPCs |
+| **RESTCONF client** | NMS, `curl`, custom tooling | Sends HTTP requests and reads responses |
+| **RESTCONF server** | TriadSim simulator | Serves YANG-defined resources |
 
-The protocol is stateless at the HTTP layer. Each request carries all necessary information: method, URI, headers, and optional body. The server responds with an HTTP status code and, when applicable, a response body.
+The protocol is stateless at the HTTP layer. Each request carries all necessary information: method, URI, headers and optional body. The server responds with an HTTP status code and, when applicable, a response body.
 
 ### 2.2. Relationship to NETCONF
 
@@ -43,13 +68,13 @@ RESTCONF is designed as a companion protocol to NETCONF. Both operate on the sam
 
 | Aspect | NETCONF | RESTCONF |
 |---|---|---|
-| Transport | SSH | HTTP/HTTPS |
+| Transport | SSH | HTTP over TCP (no TLS) |
 | Encoding | XML | JSON and XML |
 | Protocol style | RPC-based | REST-based |
 | Configuration model | Candidate + commit | Direct edit (or candidate via explicit datastore) |
-| Notifications | NETCONF notifications | Server-Sent Events (SSE) |
+| Notifications | NETCONF notifications | Not implemented in TriadSim (no SSE endpoint) |
 
-RESTCONF does not replace NETCONF; it provides an alternative HTTP-based access path to the same underlying data. A server may support both simultaneously.
+RESTCONF does not replace NETCONF; it provides an alternative HTTP-based access path to the same underlying data. A server may support both simultaneously, and TriadSim does. Because the two planes share one store, a NETCONF `commit` is authoritative over the candidate datastore — see §5.6.
 
 ---
 
@@ -64,7 +89,13 @@ RESTCONF defines two application-specific media types for serializing YANG data:
 | `application/yang-data+xml` | XML | RFC 8040, Section 11.3.1 |
 | `application/yang-data+json` | JSON | RFC 8040, Section 11.3.2 |
 
-The `application/yang-data+json` media type is the default for TriadSim RESTCONF responses when the client sends `Accept: application/yang-data+json`.
+Both are accepted for request bodies and produced for responses (`MediaTypeJSON` / `MediaTypeXML` in `internal/restconf/server.go`). JSON is the default in both directions:
+
+- `Content-Type` absent, or `application/yang-data+json` (with optional parameters such as `; charset=utf-8`) → JSON request body.
+- `Accept` absent, `*/*`, or containing `application/yang-data+json` → JSON response.
+- `Accept` containing `application/yang-data+xml` (and none of the JSON cases above) → XML response.
+- Any other `Accept` value → `406 not-acceptable`.
+- Any other `Content-Type` value on a write → `415 unsupported-media-type`.
 
 ### 3.2. YANG Patch Media Types
 
@@ -75,15 +106,47 @@ YANG Patch (RFC 8072) defines two additional media types for ordered edit operat
 | `application/yang-patch+xml` | XML |
 | `application/yang-patch+json` | JSON |
 
-These are used with the PATCH method to apply a sequence of edits to a target resource. The YANG Patch capability is advertised via the URN `urn:ietf:params:restconf:capability:yang-patch:1.0`.
+These are not implemented. A `PATCH` request declaring either type is rejected with `415 unsupported-media-type` (`error-tag: operation-not-supported`). `PATCH` on `/restconf/data` is a plain merge using `application/yang-data+json` or `application/yang-data+xml`.
 
 ### 3.3. Other Media Types
 
-| Media Type | Usage |
-|---|---|
-| `application/yang` | YANG schema retrieval (GET on `/restconf/data/ietf-yang-library:yang-library`) |
-| `application/xrd+xml` | Root resource discovery (`/.well-known/host-meta`) |
-| `text/event-stream` | Server-Sent Events (SSE) for notifications |
+| Media Type | RFC 8040 usage | Status in TriadSim |
+|---|---|---|
+| `application/yang` | YANG schema retrieval | Not implemented |
+| `application/xrd+xml` | Root resource discovery | Not implemented |
+| `text/event-stream` | Server-Sent Events (SSE) | Not implemented |
+
+### 3.4. JSON Body and Response Shape
+
+A JSON request body must be **a single-member JSON object**: the member name is the resource and its value carries the data. The member name may carry the module prefix (`sim-l2-switching:vlan`); the prefix is stripped before the name is matched. The value may be:
+
+- an **object** — a container or one list entry,
+- an **array** — a list of entries (each entry must be an object), or
+- a **scalar** — a leaf value (string, number, boolean or `null`). A scalar body such as `{"sim-l2-switching:name":"DATA-NEW"}` is accepted when the target is a leaf.
+
+A body with zero or several top-level members, a non-object root, an empty body or trailing data after the document is rejected (`invalid-value` or `malformed-message`).
+
+Responses follow RFC 8040 §6.1: the top-level member is module-qualified, nested member names are not. A container is a JSON object, a list is a JSON array (an empty list is `[]`), and a leaf is a JSON scalar. Numbers keep their YANG type (for example `"id":100`, not `"100"`); `null` is not emitted for absent leaves — absent leaves are simply omitted. The response root is the **addressed node**, so `GET /restconf/data/sim-l2-switching:stp/state` returns a `sim-l2-switching:state` member, not `sim-l2-switching:stp`.
+
+### 3.5. XML Body and Response Shape
+
+An XML request body has the resource as its single root element; its child elements are the document's children. Element names are matched by **local name**, so the namespace is not significant on input (the codec ignores it). `PATCH` and `PUT` bodies therefore work with or without `xmlns`.
+
+Responses declare namespaces from the module mapping:
+
+- The addressed node is the document element and declares its module namespace, e.g. `<state xmlns="urn:sim:l2-switching">`.
+- A nested node declares its namespace only when it changes, e.g. `<radio-link xmlns="urn:sim:radio-link">` inside `<interface xmlns="urn:sim:device">`.
+- A list produces one element per entry, with no wrapper element of its own.
+- A read of the whole datastore has several top-level nodes, so it is wrapped in the `ietf-restconf` `<data>` element:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<data xmlns="urn:ietf:params:xml:ns:yang:ietf-restconf">
+  ...
+</data>
+```
+
+`GET /restconf/data` is the only case that emits the `<data xmlns="urn:ietf:params:xml:ns:yang:ietf-restconf">` wrapper.
 
 ---
 
@@ -91,27 +154,15 @@ These are used with the PATCH method to apply a sequence of edits to a target re
 
 ### 4.1. Root Resource Discovery
 
-Before accessing any RESTCONF resource, the client must discover the RESTCONF API root. This is done by retrieving `/.well-known/host-meta` and parsing the `<Link>` element with the `restconf` relation.
+RFC 8040 discovers the RESTCONF API root by retrieving `/.well-known/host-meta` and parsing the `<Link>` element with the `restconf` relation:
 
-**Request:**
 ```http
 GET /.well-known/host-meta HTTP/1.1
 Host: localhost:8080
 Accept: application/xrd+xml
 ```
 
-**Response:**
-```http
-HTTP/1.1 200 OK
-Content-Type: application/xrd+xml
-Content-Length: nnn
-
-<XRD xmlns='http://docs.oasis-open.org/ns/xri/xrd-1.0'>
-  <Link rel='restconf' href='/restconf'/>
-</XRD>
-```
-
-The client then uses `/restconf` as the initial path component for all subsequent RESTCONF requests.
+TriadSim does **not** implement this endpoint. The base path is fixed at `/restconf` (`restconf.BasePath` in `internal/restconf/server.go`), so clients configure it directly and start with `/restconf/data`.
 
 ### 4.2. Path Structure
 
@@ -123,52 +174,111 @@ RESTCONF resource paths follow the YANG data tree hierarchy. The general form is
 
 | Path Component | Description | Example |
 |---|---|---|
-| `{+restconf}` | RESTCONF root (discovered) | `/restconf` |
+| `{+restconf}` | RESTCONF root | `/restconf` |
 | `data` | Data resource root | `/restconf/data` |
 | `{+module-name}:{+node-name}` | Module-qualified data node | `/restconf/data/sim-device:system-info` |
 | `{+list-key}` | List key predicate | `/restconf/data/sim-l2-switching:vlans/vlan=100` |
-| `{+container}` | Container node | `/restconf/data/sim-sync:ptp/clock` |
-| `operations` | RPC operation root | `/restconf/operations/sim-radio:reset-stats` |
-| `yang-library` | YANG module library | `/restconf/data/ietf-yang-library:yang-library` |
+| `{+container}` | Container node | `/restconf/data/sim-l2-switching:stp/state` |
 
-### 4.3. TriadSim Resource Paths
+Rules the parser (`internal/restconf/path.go`) enforces:
+
+- **List entries** are addressed with `key=value`, e.g. `/restconf/data/sim-l2-switching:vlans/vlan=100`. The key name is declared by the model (here `vlan` is the list name and `id` is the key, so a URL says `vlan=100`). Internally the canonical router path is `vlans/vlan[id=100]`.
+- **A list collection** is addressed without a key predicate, e.g. `/restconf/data/sim-l2-switching:vlans/vlan`. That is the resource `POST` creates in and `DELETE` clears.
+- **A list addressed without its key in the middle of a path** is a `400 malformed-message` (`list … is missing its key predicate`).
+- **A key predicate on a non-list node** is a `400 malformed-message` (`… is not a list`).
+- **The module prefix is optional on every segment**, but when present it must name the module that owns that node (`400 malformed-message` otherwise). URLs the server generates in a `Location` header always module-qualify the top node.
+- **Unknown node names** are `400 unknown-element`.
+- **Trailing slashes** are tolerated.
+
+### 4.3. Modules and Top-Level Nodes
+
+Modules are defined in `internal/router/modules.go`. `ModuleFor` selects the module from the first path segment that matches one of its node names; a path no module claims belongs to `sim-device`.
+
+| Module (prefix) | XML namespace | Top-level data nodes |
+|---|---|---|
+| `sim-device` | `urn:sim:device` | `system-info`, `interfaces` |
+| `sim-l2-switching` | `urn:sim:l2-switching` | `vlans`, `mac-table`, `stp`, `lldp` |
+| `sim-radio-link` | `urn:sim:radio-link` | none at the data-tree root; owns `radio-link` and `modulation-profile`, both below `interfaces/interface[<key>]` |
+| `sim-sync` | `urn:sim:sync` | none reachable: the data model does not yet carry `ptp` or `synce` |
+
+`sim-sync` is declared in the module table (its node names `ptp` and `synce` are mapped for paths such as `ptp/clock/state`), but `internal/model.Device` has no synchronization subtree, so no `sim-sync` resource can be addressed over RESTCONF today.
+
+### 4.4. TriadSim Resource Paths
+
+The reachable data tree (from `internal/model` and `internal/model/seed.go`):
 
 | Resource | Path | Description |
 |---|---|---|
+| Whole datastore | `/restconf/data` | Every top-level node |
 | System info | `/restconf/data/sim-device:system-info` | Device identity, uptime |
-| Radio link | `/restconf/data/sim-radio-link:radio-link` | Radio link configuration and state |
-| Radio link by name | `/restconf/data/sim-radio-link:radio-link[name=radio0]` | Specific radio link |
-| VLANs | `/restconf/data/sim-l2-switching:vlans` | VLAN list |
-| VLAN by ID | `/restconf/data/sim-l2-switching:vlans/vlan=100` | Specific VLAN |
+| Interfaces | `/restconf/data/sim-device:interfaces` | Interface container |
+| Interface | `/restconf/data/sim-device:interfaces/interface=radio0` | One interface, keyed by `name` |
+| Radio link | `/restconf/data/sim-device:interfaces/interface=radio0/radio-link` | RRL configuration and state |
+| Modulation profile | `/restconf/data/sim-device:interfaces/interface=radio0/radio-link/modulation-profile=5` | One ACM profile, keyed by `id` |
+| VLANs | `/restconf/data/sim-l2-switching:vlans` | VLAN container |
+| VLAN list | `/restconf/data/sim-l2-switching:vlans/vlan` | VLAN collection (POST target) |
+| VLAN | `/restconf/data/sim-l2-switching:vlans/vlan=100` | One VLAN, keyed by `id` |
 | MAC table | `/restconf/data/sim-l2-switching:mac-table` | Bridge forwarding database |
-| STP state | `/restconf/data/sim-l2-switching:stp/state` | STP/RSTP port states |
-| PTP clock | `/restconf/data/sim-sync:ptp/clock` | PTP clock configuration and state |
-| PTP state | `/restconf/data/sim-sync:ptp/clock/state` | Current PTP state |
-| SyncE state | `/restconf/data/sim-sync:synce/state` | SyncE synchronization state |
-| YANG library | `/restconf/data/ietf-yang-library:yang-library` | List of supported YANG modules |
-| Operations | `/restconf/operations` | Available RPC operations |
+| MAC entry | `/restconf/data/sim-l2-switching:mac-table/entry=02:00:00:00:00:02` | One entry, keyed by `mac-address` |
+| STP state | `/restconf/data/sim-l2-switching:stp/state` | STP/RSTP bridge and port states |
+| STP port | `/restconf/data/sim-l2-switching:stp/state/ports/port=eth0` | One STP port, keyed by `port` |
+| LLDP | `/restconf/data/sim-l2-switching:lldp` | LLDP configuration |
+| LLDP neighbour | `/restconf/data/sim-l2-switching:lldp/neighbors/neighbor=eth0` | One neighbour, keyed by `port` |
+
+List keys in the model:
+
+| Canonical path | Key |
+|---|---|
+| `interfaces/interface` | `name` |
+| `vlans/vlan` | `id` |
+| `vlans/vlan[...]/ports/port` | `port` |
+| `mac-table/entry` | `mac-address` |
+| `stp/state/ports/port` | `port` |
+| `lldp/neighbors/neighbor` | `port` |
+| `…/radio-link/modulation-profile` | `id` |
 
 ---
 
 ## 5. HTTP Methods
 
-RESTCONF maps CRUD operations to standard HTTP methods. The following table summarizes the RESTCONF methods defined in RFC 8040, Section 4:
+RESTCONF maps CRUD operations to standard HTTP methods. The following table summarizes the RESTCONF methods defined in RFC 8040, Section 4, with what TriadSim does:
 
-| Method | RESTCONF Operation | NETCONF Equivalent | Idempotent | Safe |
-|---|---|---|---|---|
-| **GET** | Retrieve data | `get-config`, `get` | Yes | Yes |
-| **HEAD** | Retrieve headers only | — | Yes | Yes |
-| **POST** | Create resource / invoke RPC | `edit-config` (create), `rpc` | No | No |
-| **PUT** | Create or replace resource | `edit-config` (create/replace) | Yes | No |
-| **PATCH** | Merge or patch resource | `edit-config` (merge) | No | No |
-| **DELETE** | Delete resource | `edit-config` (delete) | Yes | No |
-| **OPTIONS** | Retrieve allowed methods | — | Yes | Yes |
+| Method | RESTCONF Operation | NETCONF Equivalent | Implemented |
+|---|---|---|---|
+| **GET** | Retrieve data | `get-config`, `get` | Yes |
+| **HEAD** | Retrieve headers only | — | Yes (GET without a body) |
+| **POST** | Create resource | `edit-config` (create) | Yes, on a list collection |
+| **PUT** | Create or replace resource | `edit-config` (create/replace) | Yes |
+| **PATCH** | Merge resource | `edit-config` (merge) | Yes, plain merge only |
+| **DELETE** | Delete resource | `edit-config` (delete) | Yes |
+| **OPTIONS** | Retrieve allowed methods | — | No; answered `405` with `Allow` |
 
-### 5.1. GET
+A method that is not allowed for the target is answered `405 method-not-allowed` (`error-tag: operation-not-supported`) with an `Allow` header. The values used are:
 
-Retrieves the representation of a target resource. The response body contains the resource data in the requested media type.
+| Situation | `Allow` |
+|---|---|
+| Unsupported method on `/restconf/data` | `GET, HEAD, PUT, PATCH, POST, DELETE` |
+| Any write to `?datastore=startup` | `GET, HEAD` |
+| `PUT` on a list collection | `GET, HEAD, PATCH, POST, DELETE` |
+| `POST` on a resource that is not a list collection | `GET, HEAD, PUT, PATCH, DELETE` |
+| Wrong method on `/api/simulate/l2-storm` | `POST` |
+
+### 5.1. GET and HEAD
+
+`GET` reads a resource, a list collection, a list entry or the whole datastore. `HEAD` runs the same read — it validates `Accept`, resolves the resource and sets `Content-Type` and status — but writes no body.
+
+The response root is the addressed node (§3.4). Missing data is a `404 data-missing`: a list entry the datastore does not hold, a leaf that is absent, or a list collection with no entries. A container is returned even when empty. A read of a list through its container returns an empty JSON array when the list has no entries.
+
+`?content=` selects which leaves are read:
+
+- `all` (default) — configuration and state;
+- `config` — leaves not tagged `config:"false"` only;
+- `nonconfig` — state leaves only.
+
+With `content=config`, a state leaf is not part of the resource at all: addressing it directly returns `404`.
 
 **Example — retrieve system info:**
+
 ```http
 GET /restconf/data/sim-device:system-info HTTP/1.1
 Host: localhost:8080
@@ -176,142 +286,93 @@ Accept: application/yang-data+json
 ```
 
 **Response:**
+
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/yang-data+json
 
-{
-  "sim-device:system-info": {
-    "device-id": "sim-001",
-    "uptime": 123
-  }
-}
+{"sim-device:system-info":{"device-id":"sim-001","name":"triadsim-01","description":"TriadSim simulated telecom device","contact":"noc@example.net","location":"lab","uptime":0}}
 ```
 
-### 5.2. POST
+### 5.2. PUT
 
-Two distinct uses:
+Creates or completely replaces the target resource (`replace` semantics applied by the shared data-tree editor). If the resource does not exist it is created and the response is `201 Created` with a `Location` header; if it exists it is replaced and the response is `200 OK`. Neither response carries a body.
 
-1. **Create a data resource** — when the target is a collection (list or leaf-list), POST creates a new entry.
-2. **Invoke an RPC operation** — when the target is an operation resource (`/restconf/operations/...`), POST executes the RPC.
+- The body must carry exactly one document. For a list entry, the body may omit the key leaf — it is taken from the request path — but a key that contradicts the path is `400 invalid-value`.
+- `PUT` is not supported on a list collection: it is answered `405` with `Allow: GET, HEAD, PATCH, POST, DELETE`.
+- A `PUT` that addresses a leaf tagged `config:"false"` is `403 access-denied`.
+- A `PUT` whose proposed datastore snapshot fails model validation is `422 invalid-value`, and the datastore is left untouched.
 
-**Example — invoke RPC:**
-```http
-POST /restconf/operations/sim-radio:reset-stats HTTP/1.1
-Host: localhost:8080
-Content-Type: application/yang-data+json
+### 5.3. PATCH
 
-{
-  "sim-radio:input": {
-    "link": "radio0"
-  }
-}
-```
+Merges the body into the target resource. The response is `204 No Content`.
 
-**Response:**
-```http
-HTTP/1.1 200 OK
-Content-Type: application/yang-data+json
+- The media type is a plain `application/yang-data+json` or `application/yang-data+xml` body; YANG Patch is not accepted (`415`).
+- It can target a container, a leaf or a list entry.
+- On a list collection, every entry the body carries is merged.
+- A scalar body is accepted only when the target is a leaf; otherwise it is `400 invalid-value`.
 
-{
-  "sim-radio:output": {
-    "status": "ok"
-  }
-}
-```
+### 5.4. POST
 
-### 5.3. PUT
+Creates the list entries the body carries. The response is `201 Created` with a `Location` header pointing at the created resource; there is no body. For a single created entry the `Location` is the entry URL (`…/vlans/vlan=300`); when the body carries several entries it is the collection URL.
 
-Creates or completely replaces the target resource. If the resource does not exist, it is created; if it exists, it is replaced. A `201 Created` status is returned if the resource was newly created; `200 OK` if replaced.
-
-**Example — create or replace a VLAN:**
-```http
-PUT /restconf/data/sim-l2-switching:vlans/vlan=100 HTTP/1.1
-Host: localhost:8080
-Content-Type: application/yang-data+json
-
-{
-  "sim-l2-switching:vlan": [
-    {
-      "id": 100,
-      "name": "DATA"
-    }
-  ]
-}
-```
-
-### 5.4. PATCH
-
-Two patch types are supported:
-
-1. **Plain patch** (`application/yang-data+json` or `application/yang-data+xml`) — performs a merge operation on the target resource.
-2. **YANG Patch** (`application/yang-patch+json` or `application/yang-patch+xml`) — applies an ordered list of edits with precise control (create, delete, insert, merge, move, replace).
-
-**Example — plain patch (merge) on PTP clock:**
-```http
-PATCH /restconf/data/sim-sync:ptp/clock HTTP/1.1
-Host: localhost:8080
-Content-Type: application/yang-data+json
-
-{
-  "sim-sync:mode": "master",
-  "sim-sync:domain": 24
-}
-```
+- `POST` is only supported on a list collection. On any other resource it is `405` with `Allow: GET, HEAD, PUT, PATCH, DELETE`.
+- Creating an entry that already exists is `409 data-exists`.
+- A body that is empty, malformed or holds no entry is `400`.
 
 ### 5.5. DELETE
 
-Deletes the target resource. A `204 No Content` status is returned on success.
+Deletes the target resource and answers `204 No Content`.
 
-**Example — delete a VLAN:**
-```http
-DELETE /restconf/data/sim-l2-switching:vlans/vlan=100 HTTP/1.1
-Host: localhost:8080
-```
+- On a list entry, that entry is removed. Read-only state leaves below it are not writable and are left in place; a `DELETE` that names only a read-only leaf that exists is `403 access-denied`, and one that names a leaf that does not exist is `404 data-missing`.
+- On a list collection, every entry is removed. When the collection is empty the request is `404 data-missing`.
+- Deleting a missing entry is `404 data-missing`.
 
-### 5.6. OPTIONS
+### 5.6. Writes, Datastores and Commit
 
-Returns the HTTP methods allowed for the target resource in the `Allow` header.
+Every write goes to the datastore selected by `?datastore=`, default `running`:
 
-**Example:**
-```http
-OPTIONS /restconf/data/sim-radio-link:radio-link HTTP/1.1
-Host: localhost:8080
-```
+- `?datastore=running` (or no parameter) writes the active datastore.
+- `?datastore=candidate` writes the work-in-progress datastore. The seeded device lives in `running` and `candidate`; the test suite writes candidate and confirms `running` is untouched.
+- `?datastore=startup` is read-only for every method: it answers `405` with `Allow: GET, HEAD`.
 
-**Response:**
-```http
-HTTP/1.1 200 OK
-Allow: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS
-```
+RESTCONF writes are **not** mirrored between datastores and are not committed. The store's `Commit` is candidate-authoritative: it validates `candidate`, makes `running` a copy of it and persists `startup` from it. The practical consequences are:
+
+- A change written to `running` over RESTCONF can be overwritten by a later NETCONF `commit`, because commit replaces `running` with `candidate`.
+- A change written to `candidate` over RESTCONF is not visible in `running` until a NETCONF `commit` applies it.
+- A successful write publishes a `ConfigChanged` event on the shared bus; the request itself never commits.
 
 ---
 
 ## 6. Query Parameters
 
-RESTCONF supports several query parameters that modify the behavior of GET and other requests. These are appended to the request URI after `?`.
+RFC 8040 defines several query parameters. TriadSim reads exactly two of them (`internal/restconf/path.go`):
 
-| Parameter | Applies To | Description | Capability URN |
+| Parameter | Values | Default | Behaviour |
 |---|---|---|---|
-| `depth` | GET, HEAD | Limit subtree depth of returned data | `urn:ietf:params:restconf:capability:depth:1.0` |
-| `fields` | GET, HEAD | Select specific fields to return | `urn:ietf:params:restconf:capability:fields:1.0` |
-| `filter` | GET, HEAD | Filter data by value or XPath | `urn:ietf:params:restconf:capability:filter:1.0` |
-| `with-defaults` | GET, HEAD | Control default value reporting | `urn:ietf:params:restconf:capability:with-defaults:1.0` |
-| `content` | GET, HEAD | Select `config`, `nonconfig`, or `all` | — |
-| `replay` | SSE | Replay stored notifications | `urn:ietf:params:restconf:capability:replay:1.0` |
+| `datastore` | `running`, `candidate`, `startup` | `running` | Selects the datastore read or written |
+| `content` | `all`, `config`, `nonconfig` | `all` | Selects configuration, state or both |
 
-The complete list of RESTCONF capability URNs is maintained by IANA.
+Notes:
 
-**Example — retrieve only the RSSI field:**
+- `content` is spelled **`nonconfig`**, without a hyphen (the value of `datatree.ContentNonConfig`).
+- An unknown value for either parameter is `400 malformed-message` (`unknown datastore "…"` / `unknown content "…"`).
+- The RFC 8040 parameters `depth`, `fields`, `filter`, `with-defaults` and `replay` are **not implemented**. They are neither validated nor acted on: an unknown query parameter is ignored and the full resource is returned. The capability URNs below are consequently not advertised.
+
+**Example — configuration only:**
+
 ```http
-GET /restconf/data/sim-radio-link:radio-link?fields=rssi HTTP/1.1
+GET /restconf/data/sim-device:interfaces/interface=radio0/radio-link?content=config HTTP/1.1
 Host: localhost:8080
 Accept: application/yang-data+json
 ```
 
-**Example — limit depth to 1:**
+This omits state leaves such as `rssi`, `fade-margin`, `capacity` and `calculated-rsl`, and returns configuration such as `tx-power`. Addressing a state leaf such as `…/radio-link/rssi` with `?content=config` is `404`.
+
+**Example — read the candidate datastore:**
+
 ```http
-GET /restconf/data/sim-sync:ptp?depth=1 HTTP/1.1
+GET /restconf/data/sim-l2-switching:vlans/vlan=200?datastore=candidate HTTP/1.1
 Host: localhost:8080
 ```
 
@@ -321,22 +382,17 @@ Host: localhost:8080
 
 ### 7.1. Error Response Format
 
-When an HTTP status code in the 4xx or 5xx range is returned, the response body SHOULD contain structured error information. RESTCONF uses the `ietf-restconf` YANG module's `error` structure, defined in RFC 8040, Section 7.1.
+When an HTTP status code in the 4xx or 5xx range is returned, the response body is the `ietf-restconf` error document defined in RFC 8040, Section 7.1 (`internal/restconf/errors.go`). The document is **always JSON**, even when the request asked for XML: the codec sets `Content-Type: application/yang-data+json` for every error and has exactly one error entry per response.
 
-**JSON error response:**
 ```json
 {
   "ietf-restconf:errors": {
     "error": [
       {
-        "error-type": "application",
-        "error-tag": "invalid-value",
-        "error-app-tag": "tx-power-out-of-range",
-        "error-path": "/sim-radio-link:radio-link/tx-power",
-        "error-message": "TX power 999.0 is outside the valid range [-10, 30]",
-        "error-info": {
-          "bad-element": "tx-power"
-        }
+        "error-type": "protocol",
+        "error-tag": "data-missing",
+        "error-path": "vlans/vlan[id=999]",
+        "error-message": "data missing: vlans/vlan[id=999]"
       }
     ]
   }
@@ -345,119 +401,133 @@ When an HTTP status code in the 4xx or 5xx range is returned, the response body 
 
 ### 7.2. Error Fields
 
-| Field | Description |
-|---|---|
-| `error-type` | Error category: `transport`, `rpc`, `protocol`, `application` |
-| `error-tag` | Protocol-level error identifier (e.g., `invalid-value`, `operation-failed`) |
-| `error-app-tag` | Application-specific error identifier |
-| `error-path` | Path to the resource that caused the error |
-| `error-message` | Human-readable description |
-| `error-info` | Additional protocol-specific error information |
+The implementation emits four fields; there is no `error-app-tag` and no `error-info`:
+
+| Field | JSON key | Description |
+|---|---|---|
+| Type | `error-type` | Error category. Values produced are `protocol` (the server's own errors and data-tree protocol errors), `application` (a device/store failure) and `rpc` (a malformed or empty request body, which the codecs report with the RFC 6241 `rpc` type) |
+| Tag | `error-tag` | RFC 6241 error tag, e.g. `malformed-message`, `unknown-element`, `invalid-value`, `data-missing`, `access-denied`, `data-exists`, `operation-not-supported`, `operation-failed`, `too-big` |
+| Path | `error-path` | Canonical router path of the offending node, e.g. `vlans/vlan[id=999]` (note: the internal `[key=value]` form, not the URL form). Omitted when empty |
+| Message | `error-message` | Human-readable description. Omitted when empty |
 
 ### 7.3. HTTP Status Code Mapping
 
-The following table maps common RESTCONF error tags to HTTP status codes:
+The following table is the exact mapping in `internal/restconf/errors.go`:
 
-| error-tag | HTTP Status Code | Condition |
-|---|---|---|
-| `invalid-value` | 400, 404, 406 | Invalid value, missing resource, or unsupported encoding |
-| `malformed-message` | 400 | Request body is not well-formed |
-| `unknown-attribute` | 400 | Unknown attribute in request |
-| `bad-element` | 400 | Invalid XML/JSON element |
-| `too-big` | 400 | Request or response exceeds size limit |
-| `operation-not-supported` | 501 | Operation not implemented by server |
-| `resource-denied` | 403 | Access to resource denied |
-| `operation-failed` | 500 | Internal server error |
-| `in-use` | 409 | Resource is in use |
+| HTTP status | `error-type` | `error-tag` | Condition |
+|---|---|---|---|
+| `400 Bad Request` | `protocol` | `malformed-message` | Malformed or empty body reported by the server's own reader; unknown `?datastore=`/`?content=` value; missing key predicate, key on a non-list, or a module prefix that does not own the node |
+| `400 Bad Request` | `rpc` | `malformed-message` | Empty or unparsable JSON/XML body reported by the codec |
+| `400 Bad Request` | `protocol` | `unknown-element` | Path or body names a node that is not in the model |
+| `400 Bad Request` | `protocol` | `missing-element` | A required element (for example a list key) is absent from the body |
+| `400 Bad Request` | `protocol` | `invalid-value` | Body is not a single-member object, a key contradicts the path, a scalar body targets a non-leaf, or a leaf value cannot be parsed |
+| `403 Forbidden` | `protocol` | `access-denied` | Write to a leaf tagged `config:"false"` |
+| `404 Not Found` | `protocol` | `data-missing` | Missing leaf or list entry; `DELETE` of an empty list collection |
+| `404 Not Found` | `protocol` | `invalid-value` | Path is outside `/restconf/data` (`resource not found: …`) |
+| `405 Method Not Allowed` | `protocol` | `operation-not-supported` | Method is not allowed for the target; `Allow` header is set |
+| `406 Not Acceptable` | `protocol` | `operation-not-supported` | `Accept` is not a YANG data media type |
+| `409 Conflict` | `protocol` | `data-exists` | Creating an entry that already exists |
+| `413 Request Entity Too Large` | `protocol` | `too-big` | The request body exceeded the 1 MiB cap (`maxBodyBytes = 1 << 20`), or a data-tree operation reports a size limit |
+| `415 Unsupported Media Type` | `protocol` | `operation-not-supported` | `Content-Type` is not a YANG data media type |
+| `422 Unprocessable Entity` | `protocol` | `invalid-value` | The proposed datastore snapshot fails model validation |
+| `500 Internal Server Error` | `application` | `operation-failed` | Store or router failure; also the default for an unclassified error |
+| `501 Not Implemented` | `protocol` | `operation-not-supported` | `/restconf/operations`, `/restconf/streams`, the storm endpoint without a simulator, or any other unimplemented operation |
 
-When an error occurs and the status code is in the 4xx range (except 403 Forbidden), the server SHOULD include the error structure in the response body.
+**Note on the body limit.** Both the data-resource reader and the storm endpoint wrap the body in `http.MaxBytesReader(w, r.Body, 1<<20)` (1 MiB). A body above the limit fails while it is being read and is answered with `413 too-big` (`request body exceeds the 1048576 byte limit`); a different read failure is `400 malformed-message`.
 
 ### 7.4. Common Error Scenarios
 
-**Invalid value (400):**
-```http
-HTTP/1.1 400 Bad Request
-Content-Type: application/yang-data+json
+**Missing resource (404):**
 
-{
-  "ietf-restconf:errors": {
-    "error": [{
-      "error-type": "application",
-      "error-tag": "invalid-value",
-      "error-message": "tx-power out of range: 999"
-    }]
-  }
-}
+```http
+GET /restconf/data/sim-l2-switching:vlans/vlan=999 HTTP/1.1
+Host: localhost:8080
 ```
 
-**Resource not found (404):**
 ```http
 HTTP/1.1 404 Not Found
 Content-Type: application/yang-data+json
 
-{
-  "ietf-restconf:errors": {
-    "error": [{
-      "error-type": "application",
-      "error-tag": "invalid-value",
-      "error-message": "VLAN 999 not found"
-    }]
-  }
-}
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"data-missing","error-path":"vlans/vlan[id=999]","error-message":"data missing: vlans/vlan[id=999]"}]}}
 ```
 
+**Read-only leaf (403):**
+
+```http
+PUT /restconf/data/sim-device:interfaces/interface=radio0/radio-link/rssi HTTP/1.1
+Host: localhost:8080
+Content-Type: application/yang-data+json
+
+{"sim-device:rssi":-50}
+```
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/yang-data+json
+
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"access-denied","error-path":"interfaces/interface[name=radio0]/radio-link/rssi","error-message":"access denied: interfaces/interface[name=radio0]/radio-link/rssi is read-only"}]}}
+```
+
+**Model validation (422):**
+
+A VLAN without a name is rejected by `VLAN.Validate`:
+
+```http
+PUT /restconf/data/sim-l2-switching:vlans/vlan=400 HTTP/1.1
+Host: localhost:8080
+Content-Type: application/yang-data+json
+
+{"sim-l2-switching:vlan":[{"id":400}]}
+```
+
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/yang-data+json
+
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"invalid-value","error-message":"router: validate: vlans[1]: vlan 400: name must not be empty"}]}}
+```
+
+The rejected configuration is not written: a subsequent `GET` of the resource is `404`.
+
 **Unsupported media type (415):**
+
+```http
+PUT /restconf/data/sim-device:system-info HTTP/1.1
+Host: localhost:8080
+Content-Type: application/json
+
+{"sim-device:system-info":{"name":"x"}}
+```
+
 ```http
 HTTP/1.1 415 Unsupported Media Type
 Content-Type: application/yang-data+json
 
-{
-  "ietf-restconf:errors": {
-    "error": [{
-      "error-type": "protocol",
-      "error-tag": "operation-not-supported",
-      "error-message": "Content-Type application/xml is not supported"
-    }]
-  }
-}
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"operation-not-supported","error-message":"Content-Type \"application/json\" is not supported"}]}}
+```
+
+**Unsupported Accept (406):**
+
+```http
+GET /restconf/data/sim-device:system-info HTTP/1.1
+Host: localhost:8080
+Accept: text/plain
+```
+
+```http
+HTTP/1.1 406 Not Acceptable
+Content-Type: application/yang-data+json
+
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"operation-not-supported","error-message":"Accept \"text/plain\" is not supported"}]}}
 ```
 
 ---
 
 ## 8. Capabilities
 
-RESTCONF servers advertise optional capabilities via the `ietf-restconf-monitoring` module's `capability` leaf-list. TriadSim supports the following:
+RFC 8040 servers advertise optional capabilities via the `ietf-restconf-monitoring` module's `capability` leaf-list, and the capability URNs are registered by IANA. Examples include `urn:ietf:params:restconf:capability:depth:1.0`, `…:fields:1.0`, `…:filter:1.0`, `…:with-defaults:1.0` and `…:yang-patch:1.0`.
 
-| Capability URN | Description |
-|---|---|
-| `urn:ietf:params:restconf:capability:defaults:1.0` | Default value handling |
-| `urn:ietf:params:restconf:capability:depth:1.0` | Depth-limited retrieval |
-| `urn:ietf:params:restconf:capability:fields:1.0` | Field selection |
-| `urn:ietf:params:restconf:capability:filter:1.0` | Data filtering |
-| `urn:ietf:params:restconf:capability:with-defaults:1.0` | Default value reporting |
-| `urn:ietf:params:restconf:capability:yang-patch:1.0` | YANG Patch support |
-
-**Example — retrieve capabilities:**
-```http
-GET /restconf/data/ietf-restconf-monitoring:restconf-state/capabilities HTTP/1.1
-Host: localhost:8080
-Accept: application/yang-data+json
-```
-
-**Response:**
-```json
-{
-  "ietf-restconf-monitoring:capabilities": {
-    "capability": [
-      "urn:ietf:params:restconf:capability:depth:1.0",
-      "urn:ietf:params:restconf:capability:fields:1.0",
-      "urn:ietf:params:restconf:capability:filter:1.0",
-      "urn:ietf:params:restconf:capability:with-defaults:1.0",
-      "urn:ietf:params:restconf:capability:yang-patch:1.0"
-    ]
-  }
-}
-```
+TriadSim does **not** implement capability advertisement. There is no `ietf-restconf-monitoring` resource and no `ietf-yang-library`. A `GET` of such a path is answered `400 unknown-element` because the node is not in the model; no capability URN is served. The only request features beyond the base are the two query parameters in §6, and they are not advertised.
 
 ---
 
@@ -465,57 +535,84 @@ Accept: application/yang-data+json
 
 ### 9.1. HTTP Server
 
-TriadSim uses Go's standard `net/http` package with the `chi` router for path matching. The server is stateless at the HTTP layer; state resides in the `internal/store` package (running/candidate datastores).
+TriadSim uses Go's standard `net/http` package with the `chi` router for path matching (`internal/restconf/server.go`). The server owns one plain TCP listener (`net.Listen("tcp", …)`), so it speaks HTTP/1.1 with no TLS. There is no authentication. The configured request-header timeout is 5 s and shutdown on context cancellation is bounded to 2 s.
+
+Routes:
+
+| Route | Handler |
+|---|---|
+| `/restconf/data`, `/restconf/data/*` | Data resource (GET/HEAD/PUT/PATCH/POST/DELETE) |
+| `/restconf/operations`, `/restconf/operations/*` | `501 operation-not-supported` |
+| `/restconf/streams`, `/restconf/streams/*` | `501 operation-not-supported` |
+| `/api/simulate/l2-storm` | Simulation endpoint (`POST`) |
+
+The server is stateless at the HTTP layer; state resides in the `internal/store` package (running/candidate/startup datastores).
 
 ### 9.2. Path-to-Model Resolution
 
-The `internal/router` package maps RESTCONF paths to Go model fields using the `path` tag on model structs. The mapping is bidirectional:
+The `internal/router` package maps RESTCONF paths to Go model fields using the `path` tag on model structs and derives a type-driven schema tree (`Children`) independent of any datastore. The mapping is bidirectional:
 
-- **GET**: path → model → serialize to JSON/XML
-- **PUT/POST/PATCH/DELETE**: path + body → validate → apply to datastore
+- **GET**: URL path → canonical router path → datatree read → serialize to JSON/XML.
+- **PUT/PATCH/POST/DELETE**: URL path + body → `datatree.Apply` on a proposed snapshot → whole-snapshot model validation → diff write to the store.
+
+The shared `internal/datatree` engine gives every write the same shape: the edit is applied to an in-memory copy of the datastore, the copy is validated as a whole, and only then is the difference written. A rejected edit therefore leaves the datastore untouched.
 
 ### 9.3. Datastore Integration
 
-RESTCONF operations target the running datastore by default. The candidate datastore can be accessed via the query parameter `?datastore=candidate` (TriadSim extension for demonstration purposes; standard RESTCONF does not define a datastore query parameter).
+RESTCONF operations target the running datastore by default. The candidate and startup datastores are addressed with `?datastore=candidate` and `?datastore=startup` (a TriadSim extension for demonstration purposes; standard RESTCONF does not define a datastore query parameter). Writes are accepted on running and candidate, and rejected on startup. See §5.6 for the commit relationship with NETCONF.
 
 ### 9.4. Content Negotiation
 
-TriadSim supports both JSON and XML encoding. The server selects the encoding based on the `Accept` header:
+The server supports both JSON and XML encoding:
 
-- `Accept: application/yang-data+json` → JSON response
-- `Accept: application/yang-data+xml` → XML response
-- No `Accept` header → JSON is the default
+- `Accept: application/yang-data+xml` → XML response.
+- `Accept: application/yang-data+json`, `Accept: */*`, or no `Accept` header → JSON response.
+- Any other `Accept` → `406 not-acceptable`.
+- Request bodies: `Content-Type: application/yang-data+xml` → XML; `application/yang-data+json` or missing → JSON; any other → `415 unsupported-media-type`.
 
-### 9.5. RPC Operations
+Errors are always JSON regardless of `Accept`.
 
-All YANG `rpc` statements are available as RESTCONF operation resources under `/restconf/operations/`. TriadSim implements the following RPCs:
+### 9.5. RPC Operations and Event Streams
 
-| RPC | Path | Description |
+Not implemented. RFC 8040 operation resources under `/restconf/operations` and event streams under `/restconf/streams` are mounted only to return:
+
+```http
+HTTP/1.1 501 Not Implemented
+Content-Type: application/yang-data+json
+
+{"ietf-restconf:errors":{"error":[{"error-type":"protocol","error-tag":"operation-not-supported","error-message":"/restconf/operations/sim-l2:clear-mac-table is not implemented"}]}}
+```
+
+The message names the requested path. RPCs are available on the NETCONF plane and over SNMP, not here.
+
+### 9.6. Simulation Endpoint
+
+In addition to the standard data resource, the server exposes one simulator-specific endpoint that is not part of RFC 8040:
+
+```
+POST /api/simulate/l2-storm
+```
+
+It injects a broadcast storm on one interface by driving the L2 domain in process. The request body is a plain JSON object with two fields:
+
+| Field | Type | Meaning |
 |---|---|---|
-| `sim-radio:reset-stats` | `/restconf/operations/sim-radio:reset-stats` | Reset radio statistics |
-| `sim-radio:inject-alarm` | `/restconf/operations/sim-radio:inject-alarm` | Inject a radio alarm |
-| `sim-sync:force-holdover` | `/restconf/operations/sim-sync:force-holdover` | Force PTP into holdover |
-| `sim-l2:clear-mac-table` | `/restconf/operations/sim-l2:clear-mac-table` | Clear MAC forwarding table |
+| `port` | string | Ingress interface name, e.g. `eth0` (required) |
+| `packets` | integer | Number of frames to inject |
 
-### 9.6. Event Streams
+A successful request is `202 Accepted` with `Content-Type: application/yang-data+json` and a small status object (not a YANG data document):
 
-RESTCONF notifications are delivered via Server-Sent Events (SSE) using the `text/event-stream` media type. TriadSim exposes a single stream:
-
-```
-GET /restconf/streams/sim-events
+```json
+{"packets":1500,"port":"eth0","status":"ok"}
 ```
 
-Events are JSON-encoded and follow the SSE format:
-
-```
-event: notification
-data: {"sim-events:event": {"type": "AlarmRaised", "resource": "radio0", "severity": "major"}}
-
-```
+Errors: a malformed body is `400 malformed-message`; a missing `port` is `400 invalid-value`; a `Storm` failure (for example an unknown port) is `422 invalid-value`; a method other than `POST` is `405` with `Allow: POST`; and if the server was built without a storm simulator the endpoint is `501 operation-not-supported`. The production server is started with the L2 manager as the storm simulator, so the endpoint is live.
 
 ---
 
 ## 10. CLI Examples
+
+All examples run against a locally started simulator. The RESTCONF port comes from the configuration file (`restconf.port`, default 8080); there is no `--restconf-port` flag.
 
 ### 10.1. Starting the Server
 
@@ -523,63 +620,174 @@ data: {"sim-events:event": {"type": "AlarmRaised", "resource": "radio0", "severi
 go run ./cmd/simulator start --config configs/default.yaml
 ```
 
-The RESTCONF server listens on `:8080` by default. The port can be overridden:
+`configs/default.yaml` sets `restconf.port: 8080`, so the RESTCONF server listens on `:8080`. Change that key to use another port. The same command starts SNMP, NETCONF and the metrics endpoint.
+
+### 10.2. List the VLANs
 
 ```bash
-go run ./cmd/simulator start --restconf-port 9090
+curl -s http://localhost:8080/restconf/data/sim-l2-switching:vlans \
+  -H 'Accept: application/yang-data+json' | jq
 ```
 
-### 10.2. Retrieve System Info
+```json
+{
+  "sim-l2-switching:vlans": {
+    "vlan": [
+      {
+        "id": 100,
+        "name": "DATA",
+        "description": "default data vlan",
+        "ports": {"port": [{"port": "eth0", "mode": "access", "pvid": 100, "tagged": false, "qinq": false}]}
+      }
+    ]
+  }
+}
+```
+
+### 10.3. Read One VLAN
+
+```bash
+curl -s http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=100 \
+  -H 'Accept: application/yang-data+json' | jq
+```
+
+```json
+{
+  "sim-l2-switching:vlan": [
+    {
+      "id": 100,
+      "name": "DATA",
+      "description": "default data vlan",
+      "ports": {"port": [{"port": "eth0", "mode": "access", "pvid": 100, "tagged": false, "qinq": false}]}
+    }
+  ]
+}
+```
+
+A single list entry is still a one-element array.
+
+### 10.4. Read STP State (all content)
+
+```bash
+curl -s 'http://localhost:8080/restconf/data/sim-l2-switching:stp/state?content=all' \
+  -H 'Accept: application/yang-data+json' | jq
+```
+
+```json
+{
+  "sim-l2-switching:state": {
+    "enabled": true,
+    "protocol": "rstp",
+    "bridge-priority": 32768,
+    "bridge-address": "02:00:00:00:00:01",
+    "root-id": "02:00:00:00:00:01",
+    "root-cost": 0,
+    "ports": {
+      "port": [
+        {"port": "eth0", "role": "root", "state": "forwarding", "priority": 128, "path-cost": 20000, "edge-port": false},
+        {"port": "eth1", "role": "alternate", "state": "discarding", "priority": 128, "path-cost": 20000, "edge-port": false}
+      ]
+    }
+  }
+}
+```
+
+### 10.5. Create a VLAN and Read It Back
+
+```bash
+curl -i -X PUT http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=200 \
+  -H 'Content-Type: application/yang-data+json' \
+  -d '{"sim-l2-switching:vlan":[{"id":200,"name":"VOICE"}]}'
+# HTTP/1.1 201 Created
+# Location: /restconf/data/sim-l2-switching:vlans/vlan=200
+
+curl -s http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=200 \
+  -H 'Accept: application/yang-data+json' | jq
+```
+
+```json
+{"sim-l2-switching:vlan":[{"id":200,"name":"VOICE","ports":{"port":[]}}]}
+```
+
+Repeating the same `PUT` replaces the entry and returns `200 OK`.
+
+### 10.6. Patch a Leaf
+
+```bash
+curl -i -X PATCH http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=100/name \
+  -H 'Content-Type: application/yang-data+json' \
+  -d '{"sim-l2-switching:name":"DATA-NEW"}'
+# HTTP/1.1 204 No Content
+```
+
+### 10.7. Create a VLAN with POST
+
+```bash
+curl -i -X POST http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan \
+  -H 'Content-Type: application/yang-data+json' \
+  -d '{"sim-l2-switching:vlan":[{"id":300,"name":"TEST"}]}'
+# HTTP/1.1 201 Created
+# Location: /restconf/data/sim-l2-switching:vlans/vlan=300
+```
+
+Posting the same entry again returns `409 Conflict` (`data-exists`).
+
+### 10.8. Delete a VLAN
+
+```bash
+curl -i -X DELETE http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=300
+# HTTP/1.1 204 No Content
+```
+
+### 10.9. Delete a MAC Entry
+
+```bash
+curl -i -X DELETE \
+  http://localhost:8080/restconf/data/sim-l2-switching:mac-table/entry=02:00:00:00:00:02
+# HTTP/1.1 204 No Content
+```
+
+### 10.10. Inject a Broadcast Storm
+
+```bash
+curl -i -X POST http://localhost:8080/api/simulate/l2-storm \
+  -H 'Content-Type: application/yang-data+json' \
+  -d '{"port":"eth0","packets":1500}'
+# HTTP/1.1 202 Accepted
+# Content-Type: application/yang-data+json
+# {"packets":1500,"port":"eth0","status":"ok"}
+```
+
+### 10.11. Retrieve XML
 
 ```bash
 curl -s http://localhost:8080/restconf/data/sim-device:system-info \
-  -H 'Accept: application/yang-data+json' | jq
+  -H 'Accept: application/yang-data+xml'
 ```
 
-### 10.3. Create a VLAN
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<system-info xmlns="urn:sim:device"><device-id>sim-001</device-id><name>triadsim-01</name><description>TriadSim simulated telecom device</description><contact>noc@example.net</contact><location>lab</location><uptime>0</uptime></system-info>
+```
+
+A read of the whole datastore wraps the top-level nodes:
 
 ```bash
-curl -X PUT http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=100 \
+curl -s http://localhost:8080/restconf/data -H 'Accept: application/yang-data+xml'
+# <?xml version="1.0" encoding="UTF-8"?>
+# <data xmlns="urn:ietf:params:xml:ns:yang:ietf-restconf"><system-info xmlns="urn:sim:device">…</system-info>…</data>
+```
+
+### 10.12. Write the Candidate Datastore
+
+```bash
+curl -i -X PUT 'http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=200?datastore=candidate' \
   -H 'Content-Type: application/yang-data+json' \
-  -d '{"sim-l2-switching:vlan":[{"id":100,"name":"DATA"}]}'
+  -d '{"sim-l2-switching:vlan":[{"id":200,"name":"VOICE"}]}'
+# HTTP/1.1 201 Created
 ```
 
-### 10.4. Configure PTP
-
-```bash
-curl -X PATCH http://localhost:8080/restconf/data/sim-sync:ptp/clock \
-  -H 'Content-Type: application/yang-data+json' \
-  -d '{"sim-sync:mode":"master","sim-sync:domain":24}'
-```
-
-### 10.5. Retrieve PTP State
-
-```bash
-curl -s http://localhost:8080/restconf/data/sim-sync:ptp/clock/state \
-  -H 'Accept: application/yang-data+json' | jq
-# {"sim-sync:state":"holdover"}
-```
-
-### 10.6. Inject an Alarm via RPC
-
-```bash
-curl -X POST http://localhost:8080/restconf/operations/sim-radio:inject-alarm \
-  -H 'Content-Type: application/yang-data+json' \
-  -d '{"sim-radio:input":{"link":"radio0","type":"radioLinkDown"}}'
-```
-
-### 10.7. Delete a VLAN
-
-```bash
-curl -X DELETE http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=100
-```
-
-### 10.8. Subscribe to Events
-
-```bash
-curl -N http://localhost:8080/restconf/streams/sim-events \
-  -H 'Accept: text/event-stream'
-```
+The entry is then visible at `?datastore=candidate` but not in running until NETCONF commits the candidate.
 
 ---
 

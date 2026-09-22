@@ -26,15 +26,21 @@ Integration tests use testcontainers and require Docker.
 - `cmd/simulator` — cobra CLI entrypoint.
 - `internal/model` — managed-object structs with `path`/`xml`/`json` tags. YANG files are documentation only; the runtime never parses YANG.
 - `internal/store` — running/candidate/startup datastores; JSON persistence.
-- `internal/router` — path↔model and OID↔path mapping, RPC dispatch.
+- `internal/router` — path↔model and OID↔path mapping, RPC dispatch, the model schema tree and the MIB tables.
+- `internal/datatree` — shared data-tree read/edit engine behind the NETCONF and RESTCONF codecs.
 - `internal/event` — EventBus on channels. Domains don't import each other; cross-domain reactions flow through events.
 - `internal/radio`, `internal/l2`, `internal/sync` — domain logic. Simplified state machines, not real protocol stacks.
 - `internal/{snmp,netconf,restconf,gnmi,cli,metrics}` — management planes (`gnmi` optional).
+- `internal/l2` reads state through `router.Snapshot`, writes configuration to the running datastore
+  and learned or measured state through `router.SetState`; its periodic work (MAC aging, STP forward
+  delays, LLDP refresh) runs on the injected `clock.Clock`.
 
 ## Scope (do not exceed MVP)
 - SNMP v2c only, community `public`. No v3, no informs, no auth.
 - NETCONF: candidate, commit, discard-changes, confirmed-commit, notifications — nothing more.
-- RESTCONF: no auth. STP/RSTP, PTP/SyncE: simplified state machines — never implement real protocols.
+- RESTCONF: no auth, no YANG Patch, no TLS; `/restconf/operations` and `/restconf/streams` answer 501.
+- STP/RSTP, PTP/SyncE: simplified state machines — never implement real protocols. L2 has no data
+  plane: frames are simulated in-process and no BPDU or LLDPDU is encoded on the wire.
 - No Web UI.
 
 ## Conventions
@@ -44,13 +50,16 @@ Integration tests use testcontainers and require Docker.
 - Wrap errors with `%w`; no panics outside `main`; no silently ignored errors.
 - Anything blocking takes `context.Context` as the first parameter; respect cancellation in EventBus consumers.
 - Every model type implements `Validate() error`; read-only nodes carry `config:"false"`.
+- A list that grows at runtime is tagged `creatable:"true"`, so the router can synthesise an element
+  the boot template does not have (VLANs, VLAN members, MAC entries, LLDP neighbours). A closed list
+  (interfaces, STP ports) rejects an unknown instance with `unknown-element`.
 - Table-driven tests with testify; `t.TempDir()` for filesystem tests; no property-based tests.
 - Never hand-edit `testdata/*.golden.json` — regenerate with `-update` and inspect the diff.
 
 ## Changing a managed object — touch all of
-1. Struct in `internal/model` (+ tags)
+1. Struct in `internal/model` (+ tags; add `creatable:"true"` for a list that grows at runtime)
 2. Its `Validate()`
-3. Path/OID maps in `internal/router`
+3. Path/OID maps and module mapping in `internal/router`
 4. Golden files (regenerate, don't hand-edit)
 5. YANG doc file (docs only)
-6. Defaults in `configs/default.yaml`, if applicable
+6. Defaults in `internal/model/seed.go` and `configs/default.yaml`, if applicable

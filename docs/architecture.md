@@ -50,14 +50,15 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/store` | running/candidate/startup, diff/commit/rollback/snapshot/restore, JSON persistence | implemented (Phase 1.5, snapshot/restore Phase 3) |
 | `internal/clock` | injectable clock and `FakeClock` | implemented |
 | `internal/model` | managed-object structs with `path`/`xml`/`json` tags | radio, L2, sync, device (Phases 1.1-1.4) |
-| `internal/router` | path ↔ model, OID ↔ path, RPC dispatch, commit validation, schema tree for protocol codecs | implemented (Phase 1.6, schema Phase 2) |
+| `internal/router` | path ↔ model, OID ↔ path, RPC dispatch, commit validation, schema tree for protocol codecs, snapshot hydration, module mapping, MIB tables | implemented (Phase 1.6; schema Phase 2; dynamic lists, `Snapshot` and L2 MIBs Phase 4) |
+| `internal/datatree` | data-tree read and edit engine shared by the NETCONF and RESTCONF codecs | implemented (Phase 4) |
 | `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms | Phase 6 |
-| `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters | Phase 4 |
+| `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters, storm simulation | implemented (Phase 4) |
 | `internal/sync` | PTP, SyncE, ESMC/SSM, holdover | Phase 5 |
 | `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) | implemented (Phase 1.8); traps Phase 6 |
 | `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes, confirmed commit | implemented (Phase 2, confirmed commit Phase 3) |
 | `internal/netconf/notif` | RFC 5277 create-subscription, subscription registry and notification dispatch | implemented (Phase 3) |
-| `internal/restconf` | chi router, codecs, CRUD | Phase 4 |
+| `internal/restconf` | chi router, URL mapping, codecs, CRUD, error documents | implemented (Phase 4) |
 | `internal/gnmi` | optional gRPC service | Phase 7 |
 | `internal/metrics` | Prometheus collectors and `/metrics` | implemented (Phase 1.9) |
 | `internal/tools` | blank imports pinning the approved dependency stack | build tag `tools` only |
@@ -69,7 +70,12 @@ synchronization — behind one managed-object model and one management plane.
 - `internal/event` depends only on `internal/clock`.
 - `internal/router` depends on `model` and `store`: it resolves paths and OIDs against a model
   template and reads and writes leaf values in the store.
-- `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store` and `event`.
+- `internal/datatree` depends on `router`, `store` and `model`: it renders a datastore into a
+  document tree and applies an edit request to it, and both NETCONF and RESTCONF codec through it.
+- `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store`, `event`, `clock` and
+  `router`. A domain reads the current device with `router.Snapshot`, writes configuration to the
+  running datastore with `router.Set` and learned or measured state with `router.SetState`, which
+  keeps running and candidate in step.
 - `internal/snmp`, `internal/netconf`, `internal/restconf`, `internal/gnmi` depend on `router`,
   `store` and `event`. `internal/netconf/ops` holds the configuration operations (get-config,
   edit-config, commit, discard-changes, the confirmed-commit state machine) and owns the protocol
@@ -92,8 +98,13 @@ synchronization — behind one managed-object model and one management plane.
   `tx-power`, the read-only `rssi`/`fade-margin`/`capacity`, `link-budget/`, `atpc/`, `acm/` and
   `modulation-profile/`.
 
-The other domains are standalone managed-object trees: `VLAN`, `MACEntry`, `STPState` and
-`LLDPNeighbor` for L2, and `PTPClock`, `SyncEState`, `ESMC` and `QL` for synchronization. Every
+The other domains are standalone managed-object trees: `vlans/vlan[id=<vid>]`,
+`mac-table` (parameters, `entry[mac-address=<mac>]` and the read-only `current-count`) and
+`lldp` (parameters, `neighbors/neighbor[port=<if>]`) for L2, and `PTPClock`, `SyncEState`,
+`ESMC` and `QL` for synchronization. The STP state hangs off `stp/state`, whose ports are
+`stp/state/ports/port[port=<if>]`. A list that grows at runtime — VLANs, VLAN members, MAC
+entries, LLDP neighbours — is tagged `creatable:"true"`, so the router can synthesise an element
+the boot template does not have; a closed list rejects an unknown instance. Every
 type validates its ranges and enumerations in `Validate()`, and read-only nodes carry
 `config:"false"`, which the router rejects when a management plane tries to write them.
 
@@ -106,13 +117,19 @@ come from the schema rather than from a second table.
 
 `Get`, `Set`, `Delete`, `List` and `Dispatch` read and write the store through those resolved
 paths, and `Bindings` returns every exposed OID with its value in numeric OID order, which is what
-the SNMP agent walks. The OID tables in `router/oid.go` cover the MIB-II system and interface
-groups and the vendor `1.3.6.1.4.1.99999.1.*` radio objects. Interface columns use the 1-based
-index of the interface in `Device.Interfaces`; the vendor radio objects are scalar (`.0`) because
-the MVP has one radio link.
+the SNMP agent walks. The OID tables in `router/oid.go` cover the MIB-II system, interface and
+ifXTable counter groups, the BRIDGE-MIB bridge identity, spanning-tree and forwarding-database
+tables, the Q-BRIDGE-MIB VLAN name table and the vendor `1.3.6.1.4.1.99999.1.*` radio objects.
+Interface columns use the 1-based index of the interface in `Device.Interfaces`; the bridge
+forwarding database is indexed by the six MAC octets, the STP port table by that same interface
+index and the VLAN table by the VLAN identifier. The vendor radio objects are scalar (`.0`)
+because the MVP has one radio link. The tables are applied to the hydrated snapshot, so an entry
+that appeared at runtime gets MIB instances too.
 
 `Validate` is the `store.Validator`: it applies a candidate snapshot to a deep copy of the model
-template and runs `Device.Validate()`, so a commit can never store a value the model rejects.
+template, drops the list entries the snapshot does not mention and runs `Device.Validate()`, so a
+commit can never store a value the model rejects and an entry deleted from the datastore stays
+deleted. `Snapshot` exposes the same hydrated device to the domain packages.
 
 `Children` exposes the schema tree derived from the `path` tags (containers, lists with their key
 name, leaves with their store kind). Protocol codecs map their own element tree onto router paths
@@ -129,8 +146,12 @@ type-driven, so it does not depend on which list instances a datastore holds.
    candidate snapshot the same way before writing anything.
 4. Domains subscribe to the events they care about. `internal/radio` reacting to a simulated
    failure publishes `AlarmRaised`; `internal/sync` turns that into a PTP `StateTransition`, and
-   the management planes turn both into traps, notifications and metrics. No domain calls
-   another domain directly.
+   the management planes turn both into traps, notifications and metrics. `internal/l2` publishes
+   `StateTransition` for a bridge port and `AlarmRaised`/`AlarmCleared` for a broadcast storm. No
+   domain calls another domain directly.
+5. `internal/l2` additionally runs a periodic loop on the injected clock: it ages the MAC table,
+   applies the STP forward delays and refreshes the LLDP neighbour TTLs every tick (`5 s` by
+   default). `start` runs that loop for the lifetime of the process.
 
 ## Startup
 

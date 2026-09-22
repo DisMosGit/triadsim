@@ -76,7 +76,10 @@ Ports: SNMP `1161`, traps `1162`, NETCONF `1830` (unprivileged, not the IANA `83
 Layer rules:
 
 - `internal/model` depends on nothing.
-- `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store`, `event`.
+- `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store`, `event`, `clock` and
+  `router` (`router.Snapshot` to read, `router.Set`/`router.SetState` to write).
+- `internal/datatree` depends on `router`, `store` and `model`; it is the shared data-tree read and
+  edit engine behind the NETCONF and RESTCONF codecs.
 - `internal/snmp`, `internal/netconf`, `internal/restconf`, `internal/gnmi` depend on `router`, `store`, `event`.
 - `internal/cli`, `internal/metrics` depend on all layers as needed.
 - No imports between domain packages (`radio`, `l2`, `sync`).

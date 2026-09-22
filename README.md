@@ -12,12 +12,13 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 3 — NETCONF advanced.** The repository builds, tests and starts; the foundations,
-> managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router,
-> the SNMP v2c agent with the Prometheus endpoint and the NETCONF subsystem with
-> `get-config`/`edit-config`/`commit`/`discard-changes`, the confirmed commit with rollback and
-> `create-subscription` notifications are in place. RESTCONF and the domain logic land in
-> Phases 4–7; see [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 4 — RESTCONF and L2 switching.** The repository builds, tests and starts; the
+> foundations, managed-object models (radio, L2, sync, device), the running/candidate/startup
+> store, the router, the SNMP v2c agent with the Prometheus endpoint, the NETCONF subsystem
+> (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with rollback,
+> `create-subscription` notifications), the chi-based RESTCONF server and the L2 domain (VLAN and
+> QinQ, MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm simulation)
+> are in place. The radio and sync domain logic lands in Phases 5–7; see [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 
@@ -35,6 +36,11 @@ go run ./cmd/simulator start --config configs/default.yaml
 snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2   # radio0, eth0, eth1
 snmpget  -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.1.0  # RSSI as a float
 curl -s localhost:9090/metrics | grep simulator_
+
+# the RESTCONF server answers on :8080 (no auth)
+curl -s localhost:8080/restconf/data/sim-l2-switching:vlans
+curl -s localhost:8080/restconf/data/sim-l2-switching:stp/state?content=all
+snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2   # MAC -> bridge port
 
 # and the NETCONF subsystem on :1830 (any user, no password)
 ssh -p 1830 -s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost netconf
@@ -78,12 +84,20 @@ applies the configuration and reverts it unless a `<commit/>` follows within 30 
 [docs/protocols/NETCONF.md §7.3](docs/protocols/NETCONF.md#73-commit).
 
 The SNMP walk from Quick start is the Phase 1 check (`ifDescr` returns the three interfaces and
-the vendor RSSI OID returns a float). The RESTCONF check (Phase 4) and the full cross-domain
-scenario (Phase 6):
+the vendor RSSI OID returns a float). Phase 4 adds the L2 checks: create a VLAN over RESTCONF and
+walk the forwarding database over SNMP.
 
 ```bash
-curl http://localhost:8080/restconf/data/sim-device:system-info
-# {"device-id":"sim-001","uptime":123}
+# create VLAN 200 (running datastore) and read it back
+curl -s -X POST -H 'Content-Type: application/yang-data+json' \
+  -d '{"sim-l2-switching:vlan":[{"id":200,"name":"VOICE"}]}' \
+  http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan
+curl -s http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=200
+# {"sim-l2-switching:vlan":[{"id":200,"name":"VOICE","ports":{"port":[]}}]}
+
+# the forwarding database: the seeded entry maps 02:00:00:00:00:02 to bridge port 3
+snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2
+# SNMPv2-SMI::mib-2.17.4.3.1.2.2.0.0.0.0.2 = INTEGER: 3
 ```
 
 The cross-domain scenario — radio failure → PTP holdover → SNMP trap + NETCONF notification +
@@ -102,7 +116,8 @@ internal/store/      running / candidate / startup datastores
 internal/router/     path <-> model, OID <-> path, RPC dispatch
 internal/model/      managed-object structs (path/xml/json tags)
 internal/radio/      RRL domain: link budget, ATPC, ACM, alarms
-internal/l2/         L2 domain: VLAN/QinQ, MAC table, STP/RSTP, LLDP, counters
+internal/l2/         L2 domain: VLAN/QinQ, MAC table, STP/RSTP, LLDP, counters, storms
+internal/datatree/   data-tree read/edit engine shared by the NETCONF and RESTCONF codecs
 internal/sync/       sync domain: PTP, SyncE, ESMC/SSM, holdover
 internal/{snmp,netconf,restconf,gnmi,metrics}/   management planes
 internal/netconf/notif/                          RFC 5277 create-subscription and notification dispatch

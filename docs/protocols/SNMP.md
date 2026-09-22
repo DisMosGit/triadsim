@@ -113,7 +113,7 @@ The radio objects below are **implemented in Phase 1.8**. They are scalar object
 | `1.3.6.1.4.1.99999.1.1.7.0` | `simRadioAcmCapacity` | Gauge32 | read-only | Capacity of the active profile in Mbps |
 | `1.3.6.1.4.1.99999.1.1.8.0` | `simRadioAlarmStatus` | Integer | read-only | Radio alarm status — **Phase 6.2**, no model leaf yet |
 
-Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats. The other vendor objects (`simSyncPtp*`, `simSyncSyncE*`, `simL2VlanCount`) arrive with their domains in Phases 4, 5 and 6 and are not registered yet.
+Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats. The other vendor objects (`simSyncPtp*`, `simSyncSyncE*`, `simL2VlanCount`) arrive with their domains in Phases 5 and 6 and are not registered yet; the L2 state itself is exposed through the standard MIBs above rather than a vendor subtree.
 
 ---
 
@@ -126,8 +126,9 @@ TriadSim does not parse MIB files at runtime. Instead, it uses Go structs with O
 | **SNMPv2-SMI** | RFC 2578 | Structure of Management Information, OID definitions |
 | **SNMPv2-TC** | RFC 2579 | Textual conventions (`DisplayString`, `TimeStamp`, `MacAddress`) |
 | **SNMPv2-MIB** | RFC 3418 | `sysUpTime`, `sysDescr`, `snmpTrapOID` |
-| **IF-MIB** | RFC 2863 | `ifDescr`, `ifType`, `ifOperStatus`, interface counters |
-| **BRIDGE-MIB** | RFC 4188 | `dot1dTpFdbTable` (MAC forwarding database) |
+| **IF-MIB** | RFC 2863 | `ifDescr`, `ifType`, `ifMtu`, `ifPhysAddress`, `ifAdminStatus`, `ifOperStatus`, the `ifTable` counters and the 64-bit `ifXTable` counters |
+| **BRIDGE-MIB** | RFC 4188 | `dot1dBaseBridgeAddress`, `dot1dStpPriority`, `dot1dStpPortTable`, `dot1dTpAgingTime`, `dot1dTpFdbTable` |
+| **Q-BRIDGE-MIB** | RFC 4363 | `dot1qVlanStaticName` |
 
 ### 4.1. Textual Conventions
 
@@ -151,12 +152,49 @@ The following textual conventions from RFC 2579 are used by TriadSim MIB objects
 | `ifDescr` | `1.3.6.1.2.1.2.2.1.2` | DisplayString | read-only | Phase 1.8 |
 | `ifType` | `1.3.6.1.2.1.2.2.1.3` | INTEGER | read-only | Phase 1.8 (radio → `other(1)`, ethernet → `ethernetCsmacd(6)`) |
 | `ifOperStatus` | `1.3.6.1.2.1.2.2.1.8` | INTEGER | read-only | Phase 1.8 (`up(1)`/`down(2)`) |
+| `ifMtu` | `1.3.6.1.2.1.2.2.1.4` | INTEGER | read-only | Phase 4.11 (`mtu`) |
+| `ifPhysAddress` | `1.3.6.1.2.1.2.2.1.6` | PhysAddress | read-only | Phase 4.11 (`mac-address`, six octets) |
+| `ifAdminStatus` | `1.3.6.1.2.1.2.2.1.7` | INTEGER | read-write | Phase 4.11 (`enabled`, `up(1)`/`down(2)`) |
 | `ifInOctets` | `1.3.6.1.2.1.2.2.1.10` | Counter32 | read-only | Phase 4.11 |
+| `ifInUcastPkts` | `1.3.6.1.2.1.2.2.1.11` | Counter32 | read-only | Phase 4.11 |
+| `ifInDiscards` | `1.3.6.1.2.1.2.2.1.13` | Counter32 | read-only | Phase 4.11 |
+| `ifInErrors` | `1.3.6.1.2.1.2.2.1.14` | Counter32 | read-only | Phase 4.11 |
 | `ifOutOctets` | `1.3.6.1.2.1.2.2.1.16` | Counter32 | read-only | Phase 4.11 |
+| `ifOutUcastPkts` | `1.3.6.1.2.1.2.2.1.17` | Counter32 | read-only | Phase 4.11 |
+| `ifOutDiscards` | `1.3.6.1.2.1.2.2.1.19` | Counter32 | read-only | Phase 4.11 |
+| `ifOutErrors` | `1.3.6.1.2.1.2.2.1.20` | Counter32 | read-only | Phase 4.11 |
+| `ifName` | `1.3.6.1.2.1.31.1.1.1.1` | DisplayString | read-only | Phase 4.11 |
+| `ifHCInOctets` | `1.3.6.1.2.1.31.1.1.1.6` | Counter64 | read-only | Phase 4.11 |
+| `ifHCInUcastPkts` | `1.3.6.1.2.1.31.1.1.1.7` | Counter64 | read-only | Phase 4.11 |
+| `ifHCOutOctets` | `1.3.6.1.2.1.31.1.1.1.10` | Counter64 | read-only | Phase 4.11 |
+| `ifHCOutUcastPkts` | `1.3.6.1.2.1.31.1.1.1.11` | Counter64 | read-only | Phase 4.11 |
+| `dot1dBaseBridgeAddress` | `1.3.6.1.2.1.17.1.1` | MacAddress | read-only | Phase 4.11 (`stp/state/bridge-address`) |
+| `dot1dStpPriority` | `1.3.6.1.2.1.17.2.2` | INTEGER | read-write | Phase 4.11 (`stp/state/bridge-priority`) |
+| `dot1dStpPortPriority` | `1.3.6.1.2.1.17.2.15.1.2` | INTEGER | read-write | Phase 4.11 (`stp/state/ports/port/priority`) |
+| `dot1dStpPortState` | `1.3.6.1.2.1.17.2.15.1.3` | INTEGER | read-only | Phase 4.11 (RSTP `discarding` → `blocking(2)`) |
+| `dot1dStpPortEnable` | `1.3.6.1.2.1.17.2.15.1.4` | INTEGER | read-only | Phase 4.11 |
+| `dot1dStpPortPathCost` | `1.3.6.1.2.1.17.2.15.1.5` | INTEGER | read-write | Phase 4.11 |
+| `dot1dTpAgingTime` | `1.3.6.1.2.1.17.4.2` | INTEGER | read-write | Phase 4.11 (`mac-table/aging-time`) |
+| `dot1dTpFdbAddress` | `1.3.6.1.2.1.17.4.3.1.1` | MacAddress | read-only | Phase 4.11 (index is the six MAC octets) |
+| `dot1dTpFdbPort` | `1.3.6.1.2.1.17.4.3.1.2` | INTEGER | read-only | Phase 4.11 (bridge port number) |
+| `dot1dTpFdbStatus` | `1.3.6.1.2.1.17.4.3.1.3` | INTEGER | read-only | Phase 4.11 (`dynamic` → `learned(3)`, `static` → `mgmt(5)`) |
+| `dot1qVlanStaticName` | `1.3.6.1.2.1.17.7.1.4.3.1.1` | DisplayString | read-only | Phase 4.11 (index is the VLAN id) |
 | `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 |
 
 Scalar objects are addressed with the `.0` instance (`sysDescr.0`); interface columns append the
-1-based interface index (`ifDescr.1`). The agent walks these instances in numeric OID order.
+1-based interface index (`ifDescr.1`). The bridge tables use their own indexes:
+`dot1dStpPortTable` by the bridge port number (the same 1-based interface index),
+`dot1dTpFdbTable` by the six MAC octets (`dot1dTpFdbPort.2.0.0.0.0.2` is the seeded entry for
+`02:00:00:00:00:02`) and `dot1qVlanStaticName` by the VLAN identifier. The agent walks these
+instances in numeric OID order, and the tables are built from the hydrated datastore, so an
+entry learned or created at runtime gets an instance without a restart.
+
+A walk of the forwarding database therefore looks like:
+
+```bash
+snmpwalk -v2c -c public 127.0.0.1:161 1.3.6.1.2.1.17.4.3.1.2
+# SNMPv2-SMI::mib-2.17.4.3.1.2.2.0.0.0.0.2 = INTEGER: 3
+```
 
 The `ifDescr` object is particularly important for TriadSim, as it exposes the simulated interface names (`radio0`, `eth0`, `eth1`) to the NMS .
 
@@ -203,8 +241,10 @@ GetResponse:
   error-status: noError(0)
 ```
 
-**Implementation (Phase 1.8).** A `SetRequest` writes the `running` datastore (writable-running
-semantics). The agent resolves every varbind through `internal/router`, rejects a read-only
+**Implementation (Phase 1.8, table objects Phase 4).** A `SetRequest` writes the `running`
+datastore (writable-running semantics). The agent resolves every varbind through `internal/router`
+using the model path of the binding it just looked up, so an object of a table that grew at
+runtime is writable as well; it rejects a read-only
 object with `ReadOnly` (`noSuchName`, `wrongType` and `wrongValue` are used for an unknown OID, a
 bad value type and a value the model rejects), then builds the whole proposed running
 configuration, validates it with the router and only then applies the writes. A multi-varbind

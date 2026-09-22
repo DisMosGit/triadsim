@@ -101,6 +101,19 @@ Managed objects mark read-only nodes with the `config:"false"` tag (for example 
 `fade-margin`). Enforcement lives in `internal/router`, which rejects a write to such a node
 before it reaches the store — the store itself has no schema knowledge.
 
+## Domain state writes
+
+`internal/router` gives the domains a second write path. `SetState` writes a leaf tagged
+`config:"false"` — a learned MAC entry, a counter, a measured radio level — to the running **and**
+the candidate datastore, and `DeleteState` removes it from both. Candidate is what `Commit` copies
+into running, so a state leaf written only to running would disappear at the next commit; the
+seeded read-only leaves already live in both for the same reason. Management planes keep using
+`Set`, which writes the addressed datastore and rejects a read-only leaf.
+
+Configuration written through RESTCONF goes to the running datastore only, so it is visible
+immediately but not part of candidate; a later NETCONF commit replaces it with the candidate
+contents. This is a deliberate Phase 4 limitation, recorded in `ROADMAP.md`.
+
 ## Persistence
 
 `startup` is persisted as JSON (`startup.json`, path configurable through `startup.file` in
@@ -133,4 +146,5 @@ startup and is a no-op when persistence is disabled or the file does not exist.
 The in-memory implementation is complete: `internal/store/memory.go` (the three datastores),
 `diff.go` (`diffValues`) and `persist.go` (`Save`/`Load`). `start` wires it up: it loads the
 persisted startup, seeds `DefaultDevice` into the candidate and commits it on the first boot, and
-installs the router as the commit validator.
+installs the router as the commit validator. Phase 4 added the domain write path above; the
+persisted document format is unchanged.

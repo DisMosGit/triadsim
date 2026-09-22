@@ -442,74 +442,115 @@
 > **Результат фазы:** VLAN через RESTCONF; MAC-table через SNMP; STP state виден через RESTCONF.
 
 ### 4.1. RESTCONF HTTP-каркас
-- [ ] `internal/restconf/server.go` — `chi.Router` · `M` 🧪
-- [ ] Порт `:8080`, медиатипы `application/yang-data+json`, `+xml` · `S`
-- [ ] `GET`, `PUT`, `PATCH`, `POST`, `DELETE` · `M` 🧪
-- [ ] Коммит: `feat(restconf): chi skeleton` · `M` 🧪
+- [x] `internal/restconf/server.go` — `chi.Router` · `M` 🧪
+- [x] Порт `:8080`, медиатипы `application/yang-data+json`, `+xml` · `S`
+- [x] `GET`, `PUT`, `PATCH`, `POST`, `DELETE` · `M` 🧪
+- [x] Коммит: `feat(restconf): chi skeleton` · `M` 🧪
 
 ### 4.2. URL-структура и маршрутизация
-- [ ] `internal/restconf/path.go` — парсинг `/restconf/data/<module>:<path>` · `M` 🧪
-- [ ] Маппинг на `router.path` · `M` 🧪
-- [ ] Коммит: `feat(restconf): url routing` · `M` 🧪
+- [x] `internal/restconf/path.go` — парсинг `/restconf/data/<module>:<path>` · `M` 🧪
+- [x] Маппинг на `router.path` · `M` 🧪
+- [x] Коммит: `feat(restconf): url routing` · `M` 🧪
 
 ### 4.3. GET / PUT / PATCH / DELETE
-- [ ] `internal/restconf/ops/get.go` · `M` 🧪
-- [ ] `internal/restconf/ops/put.go` — replace + validate + apply · `M` 🧪
-- [ ] `internal/restconf/ops/patch.go` — merge + validate + apply · `M` 🧪
-- [ ] `internal/restconf/ops/delete.go` · `S` 🧪
-- [ ] Коды ошибок: 400, 404, 409, 415, 422 · `M` 🧪
-- [ ] Коммит: `feat(restconf): CRUD operations` · `L` 🧪
+- [x] `internal/restconf/ops/get.go` · `M` 🧪
+- [x] `internal/restconf/ops/put.go` — replace + validate + apply · `M` 🧪
+- [x] `internal/restconf/ops/patch.go` — merge + validate + apply · `M` 🧪
+- [x] `internal/restconf/ops/delete.go` · `S` 🧪
+- [x] Коды ошибок: 400, 404, 409, 415, 422 · `M` 🧪
+- [x] Коммит: `feat(restconf): CRUD operations` · `L` 🧪
 
 ### 4.4. Media types
-- [ ] JSON codec через `encoding/json` · `S` 🧪
-- [ ] XML codec через `encoding/xml` · `M` 🧪
-- [ ] Согласование `Accept`/`Content-Type` · `S` 🧪
-- [ ] Коммит: `feat(restconf): json + xml codecs` · `M` 🧪
+- [x] JSON codec через `encoding/json` · `S` 🧪
+- [x] XML codec через `encoding/xml` · `M` 🧪
+- [x] Согласование `Accept`/`Content-Type` · `S` 🧪
+- [x] Коммит: `feat(restconf): json + xml codecs` · `M` 🧪
 
 ### 4.5. L2: VLAN + QinQ
-- [ ] `internal/l2/vlan.go` — CRUD VLAN, QinQ outer/inner · `M` 🧪
-- [ ] Обработка members (tagged/untagged) на интерфейсах · `M` 🧪
-- [ ] Валидация: VLAN id 1–4094, QinQ outer ≠ inner · `S` 🧪
-- [ ] Коммит: `feat(l2): vlan + qinq` · `M` 🧪
+- [x] `internal/l2/vlan.go` — CRUD VLAN, QinQ outer/inner · `M` 🧪
+- [x] Обработка members (tagged/untagged) на интерфейсах · `M` 🧪
+- [x] Валидация: VLAN id 1–4094, QinQ outer ≠ inner · `S` 🧪
+- [x] Коммит: `feat(l2): vlan + qinq` · `M` 🧪
 
 ### 4.6. L2: MAC table
-- [ ] `internal/l2/mac.go` — learning, aging (через `clock.Clock`) · `M` 🧪
-- [ ] VLAN-aware таблица · `M` 🧪
-- [ ] Публикация MAC-таблицы через SNMP `dot1dTpFdbPort` · `M` 🧪
-- [ ] Коммит: `feat(l2): mac table` · `M` 🧪
+- [x] `internal/l2/mac.go` — learning, aging (через `clock.Clock`) · `M` 🧪
+- [x] VLAN-aware таблица · `M` 🧪
+- [x] Публикация MAC-таблицы через SNMP `dot1dTpFdbPort` · `M` 🧪
+- [x] Коммит: `feat(l2): mac table` · `M` 🧪
 
 ### 4.7. L2: STP/RSTP simplified
-- [ ] `internal/l2/stp.go` — state machine (Disabled, Blocking, Listening, Learning, Forwarding) · `M` 🧪
-- [ ] Root election (упрощённая) · `M` 🧪
-- [ ] Публикация состояния в EventBus · `S` 🧪
-- [ ] Тесты табличных переходов · `M` 🧪
-- [ ] Коммит: `feat(l2): stp/rstp state machine` · `L` 🧪
+- [x] `internal/l2/stp.go` — state machine (Disabled, Blocking, Listening, Learning, Forwarding) · `M` 🧪
+- [x] Root election (упрощённая) · `M` 🧪
+- [x] Публикация состояния в EventBus · `S` 🧪
+- [x] Тесты табличных переходов · `M` 🧪
+- [x] Коммит: `feat(l2): stp/rstp state machine` · `L` 🧪
 
 ### 4.8. L2: LLDP
-- [ ] `internal/l2/lldp.go` — статические соседи из конфига · `M` 🧪
-- [ ] Периодические TLV (упрощённо) через `clock.Clock` · `S` 🧪
-- [ ] Коммит: `feat(l2): lldp` · `M` 🧪
+- [x] `internal/l2/lldp.go` — статические соседи из конфига · `M` 🧪
+- [x] Периодические TLV (упрощённо) через `clock.Clock` · `S` 🧪
+- [x] Коммит: `feat(l2): lldp` · `M` 🧪
 
 ### 4.9. L2: interface counters
-- [ ] `internal/l2/counters.go` — rx/tx bytes, packets, errors, drops · `M` 🧪
-- [ ] Инкремент при симуляции трафика · `M` 🧪
-- [ ] Публикация через SNMP `ifTable` · `M` 🧪
-- [ ] Коммит: `feat(l2): counters` · `M` 🧪
+- [x] `internal/l2/counters.go` — rx/tx bytes, packets, errors, drops · `M` 🧪
+- [x] Инкремент при симуляции трафика · `M` 🧪
+- [x] Публикация через SNMP `ifTable` · `M` 🧪
+- [x] Коммит: `feat(l2): counters` · `M` 🧪
 
 ### 4.10. Broadcast storm simulation
-- [ ] `internal/l2/storm.go` — API-эндпоинт инжекции · `M` 🧪
-- [ ] Rate-limit → alarm · `M` 🧪
-- [ ] Коммит: `feat(l2): broadcast storm simulation` · `M` 🧪
+- [x] `internal/l2/storm.go` — API-эндпоинт инжекции · `M` 🧪
+- [x] Rate-limit → alarm · `M` 🧪
+- [x] Коммит: `feat(l2): broadcast storm simulation` · `M` 🧪
 
 ### 4.11. SNMP-привязка L2
-- [ ] Заполнить `internal/router/oid.go` MIB-II (ifTable) и BRIDGE-MIB · `M` 🧪
-- [ ] Тест: `snmpwalk ...1.3.6.1.2.1.17.4.3.1.2` возвращает MAC-port · `M` 🧪
-- [ ] Коммит: `feat(snmp): l2 mib bindings` · `M` 🧪
+- [x] Заполнить `internal/router/oid.go` MIB-II (ifTable) и BRIDGE-MIB · `M` 🧪
+- [x] Тест: `snmpwalk ...1.3.6.1.2.1.17.4.3.1.2` возвращает MAC-port · `M` 🧪
+- [x] Коммит: `feat(snmp): l2 mib bindings` · `M` 🧪
 
 ### 4.12. Документация L2 + RESTCONF
-- [ ] `docs/protocols/L2.md` — 802.1Q, QinQ, MAC, STP/RSTP simplified, LLDP, counters, MIB-соответствие · `L` 📝
-- [ ] `docs/protocols/RESTCONF.md` — URL, media types, коды ошибок, примеры `curl` · `M` 📝
-- [ ] Коммит: `docs: l2 + restconf` · `M` 📝
+- [x] `docs/protocols/L2.md` — 802.1Q, QinQ, MAC, STP/RSTP simplified, LLDP, counters, MIB-соответствие · `L` 📝
+- [x] `docs/protocols/RESTCONF.md` — URL, media types, коды ошибок, примеры `curl` · `M` 📝
+- [x] Коммит: `docs: l2 + restconf` · `M` 📝
+
+> **Отклонения при реализации Phase 4:**
+> - **`creatable:"true"` — новый тег модели.** Списки, которые наполняются в рантайме
+>   (`vlans/vlan`, `ports/port`, `mac-table/entry`, `lldp/neighbors/neighbor`), помечены новым
+>   тегом; `router.selectElement` синтезирует элемент для такого списка, поэтому PUT/PATCH/POST
+>   и SNMP SET могут адресовать запись, которой нет в boot-шаблоне. Закрытые списки (interfaces,
+>   stp/state/ports/port) по-прежнему отвечают `unknown-element`.
+> - **Гидратация снимка — клон шаблона.** `Router.deviceFromValues` начинает с deep-copy
+>   boot-шаблона (порядок инстансов, значения листьев, которых нет в сторе), но **вырезает**
+>   элементы списков, которых нет в датасторе (`pruneLists`), поэтому удаление VLAN/MAC/LLDP
+>   видно домену. Полностью пустой датастор считается «ещё не засеянным» и сохраняет шаблон —
+>   это нужно валидации свежего candidate. Следствие: PUT-replace может не заметить пропущенный
+>   обязательный лист, если шаблон его подставляет (существовавшая и раньше дыра).
+> - **`Router.Snapshot`** отдаёт доменам гидратированный `*model.Device`; `internal/l2` читает
+>   состояние через него, пишет конфигурацию в running (`Router.Set`), а изученное/измеренное —
+>   через `Router.SetState` (running + candidate, потому что `Store.Commit` копирует candidate).
+>   Конфигурация, записанная по RESTCONF, в candidate не попадает — это осознанный компромисс,
+>   к которому стоит вернуться в Phase 6.
+> - **STP: пять фаз, три состояния у RSTP.** Машина проходит классические
+>   disabled → blocking → listening → learning → forwarding; модель принимает оба словаря
+>   (`model.STPPortStates`), а для `rstp` первые три фазы пишутся как `discarding`. Forward delay
+>   (по умолчанию 15 с) планируется на инжектированных часах и применяется периодическим
+>   тиком. Выборы корня упрощены: сравнение (priority, address), в модели хранятся только
+>   root-id и root-cost, BPDU по проводу не кодируются.
+> - **Кольцо событий.** Домен публикует только `StateTransition` (STP) и
+>   `AlarmRaised`/`AlarmCleared` (broadcast storm). Событий `VLANCreated`/`MACLearned` нет —
+>   документация L2 приведена в соответствие.
+> - **`internal/datatree`** — общий движок чтения/правки дерева для NETCONF и RESTCONF
+>   (RFC 6241 error-tag'и, edit-семантика). NETCONF-голдены перегенерированы
+>   (`go test ./internal/netconf -update`): добавлены message-id 4–6 (создание VLAN 200 и
+>   фильтрованный get-config), старые 4–6 сдвинуты в 7–9.
+> - **RESTCONF.** `/restconf/operations` и `/restconf/streams` отвечают 501, YANG Patch, depth,
+>   fields, filter и yang-library не реализованы; авторизации и TLS нет. `POST` в
+>   `/api/simulate/l2-storm` — вне `/restconf` и вне YANG-модели.
+> - **SNMP.** Добавлен тип `Counter64` (ifXTable-счётчики) и табличные scope'ы
+>   `scopeSTPPort`/`scopeMAC`/`scopeVLAN`; SET теперь резолвит путь из найденного binding'а, а не
+>   из шаблона, поэтому запись в выросшую таблицу тоже возможна. Один модельный лист может
+>   отображаться в несколько MIB-объектов (ifAdminStatus/ifOperStatus) — в `byPath` остаётся
+>   отображение с декодером.
+> - **CLI.** Команд `simulator l2 ...` нет: домен управляется через RESTCONF/NETCONF/SNMP,
+>   а `start` поднимает `l2.Manager.Run` вместе с менеджмент-плоскостями.
 
 **✅ Phase 4 завершена, когда:** VLAN через RESTCONF; MAC-table через SNMP; STP state виден через RESTCONF.
 

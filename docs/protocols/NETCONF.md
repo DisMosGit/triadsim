@@ -339,8 +339,9 @@ negotiated framing (end-of-message for `base:1.0`, chunked for `base:1.1`):
 - `eventTime` is the event's timestamp in RFC 3339 UTC; it is set by the publishing domain, or by
   the event bus when the publisher left it zero.
 - `<event>` mirrors `event.Event`: `type` (`AlarmRaised`, `AlarmCleared`, `ConfigChanged`,
-  `StateTransition`), `resource`, optional `severity` and optional `message`. It is the same
-  payload the RESTCONF event stream (`sim-events:event`, Phase 4) will carry.
+  `StateTransition`), `resource`, optional `severity` and optional `message`. The same payload is
+  what a RESTCONF `sim-events:event` stream would carry; RESTCONF event streams are not
+  implemented (Phase 4 answers `/restconf/streams` with `501 operation-not-supported`).
 - Every EventBus event is rendered once and queued for every subscribed session. A session that
   does not read quickly enough loses notifications and the drop is logged (the event bus already
   drops for slow subscribers); one slow client never delays another.
