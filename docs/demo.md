@@ -138,5 +138,11 @@ The same scenario is covered twice in the test suite:
 - `test/integration/crossdomain_test.go` runs the compiled binary in a container and drives it with
   real clients — `go test -tags=integration ./...`.
 
-`scripts/demo.sh` reproduces the scenario with `curl`; see [cli.md](cli.md) for the commands and
-[metrics.md](metrics.md) for the counters.
+`scripts/demo.sh` reproduces the whole scenario in one command: it builds the binary, starts it on
+a temporary configuration, fails the radio link, asserts the PTP holdover and the
+`simulator_alarms_total{severity="critical",type="radio"}` counter, restores the link and asserts
+the cleared counter. `snmptrapd` and `ssh` are used when they are installed; `DEMO_NETCONF=1` also
+opens a NETCONF subscription and prints the notifications it receives. The ports can be overridden
+with `DEMO_SNMP_PORT`, `DEMO_TRAP_PORT`, `DEMO_NETCONF_PORT`, `DEMO_RESTCONF_PORT` and
+`DEMO_METRICS_PORT`. See [cli.md](cli.md) for the commands and [metrics.md](metrics.md) for the
+counters.
