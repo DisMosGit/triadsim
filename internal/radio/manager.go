@@ -74,10 +74,9 @@ type Deps struct {
 	FadeMarginMinDB    float64
 	FadeMarginClearDB  float64
 	ATPCStepDB         float64
-	// FailureFadeDB and DegradeFadeDB are the fade depths the simulation
-	// helpers inject by default. Zero selects the matching default.
+	// FailureFadeDB is the fade depth a radio failure injects by default.
+	// Zero selects DefaultFailureFadeDB.
 	FailureFadeDB float64
-	DegradeFadeDB float64
 }
 
 // Manager implements the radio-link (RRL) domain: the link budget, RSSI, fade
@@ -99,7 +98,6 @@ type Manager struct {
 	fadeMarginClearDB  float64
 	atpcStepDB         float64
 	failureFadeDB      float64
-	degradeFadeDB      float64
 
 	// mu serialises the read-modify-write cycles of Run, Tick and the
 	// simulation helpers.
@@ -141,9 +139,6 @@ func New(deps Deps) (*Manager, error) {
 	if deps.FailureFadeDB == 0 {
 		deps.FailureFadeDB = DefaultFailureFadeDB
 	}
-	if deps.DegradeFadeDB == 0 {
-		deps.DegradeFadeDB = DefaultDegradeFadeDB
-	}
 	return &Manager{
 		router:             deps.Router,
 		bus:                deps.Bus,
@@ -155,15 +150,11 @@ func New(deps Deps) (*Manager, error) {
 		fadeMarginClearDB:  deps.FadeMarginClearDB,
 		atpcStepDB:         deps.ATPCStepDB,
 		failureFadeDB:      deps.FailureFadeDB,
-		degradeFadeDB:      deps.DegradeFadeDB,
 		fade:               make(map[string]float64),
 		states:             make(map[string]string),
 		known:              make(map[string]bool),
 	}, nil
 }
-
-// Clock exposes the manager's time source.
-func (m *Manager) Clock() clock.Clock { return m.clock }
 
 // Run performs the periodic domain work until ctx is cancelled. The first tick
 // runs immediately, so a restart publishes the alarm state of the persisted
@@ -231,10 +222,6 @@ func (m *Manager) RadioFailure(ctx context.Context, link string, fadeDB float64)
 func (m *Manager) RadioRestore(ctx context.Context, link string) (string, error) {
 	return m.inject(ctx, link, 0, true)
 }
-
-// DegradeFade returns the fade depth RadioFailure injects by default when a
-// caller asks for a degraded link rather than a down one.
-func (m *Manager) DegradeFade() float64 { return m.degradeFadeDB }
 
 // inject applies or clears the simulated fade of one link and evaluates it.
 func (m *Manager) inject(ctx context.Context, link string, fadeDB float64, restore bool) (string, error) {

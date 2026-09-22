@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/DisMosGit/triadsim/internal/radio"
 )
 
 // alarmInjection is what one --type injects: the simulation endpoint it calls
@@ -22,7 +24,7 @@ type alarmInjection struct {
 // API.
 var alarmInjections = map[string]alarmInjection{
 	"radioLinkDown":     {endpoint: "/api/simulate/radio-failure"},
-	"radioLinkDegraded": {endpoint: "/api/simulate/radio-failure", fadeDB: 32},
+	"radioLinkDegraded": {endpoint: "/api/simulate/radio-failure", fadeDB: radio.DefaultDegradeFadeDB},
 	"radioLinkUp":       {endpoint: "/api/simulate/radio-restore"},
 }
 

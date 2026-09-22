@@ -142,7 +142,7 @@ func TestRadioFailureInjectsTheDegradedBand(t *testing.T) {
 	f := newFixture(t, noATPC)
 	ctx := t.Context()
 
-	state, err := f.manager.RadioFailure(ctx, "radio0", f.manager.DegradeFade())
+	state, err := f.manager.RadioFailure(ctx, "radio0", DefaultDegradeFadeDB)
 	require.NoError(t, err)
 	assert.Equal(t, model.RadioLinkStateDegraded, state)
 	assert.Equal(t, model.RadioLinkStateDegraded, f.leaf(t, "link-state"))
