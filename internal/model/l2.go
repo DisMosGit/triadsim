@@ -127,7 +127,7 @@ type VLAN struct {
 	ID          uint16     `path:"id" key:"true" xml:"id" json:"id"`
 	Name        string     `path:"name" xml:"name" json:"name"`
 	Description string     `path:"description" xml:"description,omitempty" json:"description,omitempty"`
-	Ports       []VLANPort `path:"ports/port" xml:"ports>port" json:"ports"`
+	Ports       []VLANPort `path:"ports/port" creatable:"true" xml:"ports>port" json:"ports"`
 }
 
 // VLANPort is one member port of a VLAN. QinQ (IEEE 802.1ad) pushes an outer

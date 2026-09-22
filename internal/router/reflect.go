@@ -88,7 +88,15 @@ func keyTagName(t reflect.Type) string {
 }
 
 // selectElement picks the list element whose key field equals seg.Value.
-func selectElement(slice reflect.Value, seg Segment) (reflect.Value, error) {
+//
+// The store, not the boot template, is authoritative for which instances
+// exist, so an element the template does not have is synthesized from the
+// element type when the list is tagged creatable:"true" (VLANs, MAC entries,
+// LLDP neighbours). Reads and writes still go through the store, so a
+// synthesized element only supplies the node's type and access; a closed list
+// keeps reporting ErrNotFound, which is how interfaces and the modulation
+// profiles stay fixed.
+func selectElement(slice reflect.Value, seg Segment, creatable bool) (reflect.Value, error) {
 	elemType := slice.Type().Elem()
 	for elemType.Kind() == reflect.Pointer {
 		elemType = elemType.Elem()
@@ -119,7 +127,19 @@ func selectElement(slice reflect.Value, seg Segment) (reflect.Value, error) {
 			return element, nil
 		}
 	}
-	return reflect.Value{}, fmt.Errorf("%w: %s[%s=%s]", ErrNotFound, seg.Name, seg.Key, seg.Value)
+
+	if !creatable {
+		return reflect.Value{}, fmt.Errorf("%w: %s[%s=%s]", ErrNotFound, seg.Name, seg.Key, seg.Value)
+	}
+	return synthesizeElement(elemType), nil
+}
+
+// synthesizeElement returns a detached addressable zero element of a list.
+func synthesizeElement(elemType reflect.Type) reflect.Value {
+	if elemType.Kind() == reflect.Pointer {
+		return reflect.New(elemType.Elem())
+	}
+	return reflect.New(elemType).Elem()
 }
 
 // resolve walks segs from root and returns the addressed node.
@@ -158,7 +178,7 @@ func resolve(root reflect.Value, segs []Segment) (node, error) {
 					}
 					return node{}, fmt.Errorf("%w: list %s requires a key predicate", ErrInvalidPath, last.Name)
 				}
-				element, err := selectElement(fieldValue, last)
+				element, err := selectElement(fieldValue, last, field.Tag.Get("creatable") == "true")
 				if err != nil {
 					return node{}, err
 				}

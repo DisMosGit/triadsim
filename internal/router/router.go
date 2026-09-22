@@ -86,12 +86,11 @@ type Binding struct {
 // Router resolves model paths and OIDs against a device template and reads and
 // writes leaf values in a store.
 type Router struct {
-	root    *model.Device
-	store   store.Store
-	schema  *schemaNode
-	objects []indexedObject
-	byOID   map[string]indexedObject
-	byPath  map[string]indexedObject
+	root   *model.Device
+	store  store.Store
+	schema *schemaNode
+	byOID  map[string]indexedObject
+	byPath map[string]indexedObject
 }
 
 // New builds a router for root and st. It fails when the template cannot be
@@ -115,12 +114,11 @@ func New(root *model.Device, st store.Store) (*Router, error) {
 	}
 
 	r := &Router{
-		root:    root,
-		store:   st,
-		schema:  schema,
-		objects: objects,
-		byOID:   make(map[string]indexedObject, len(objects)),
-		byPath:  make(map[string]indexedObject, len(objects)),
+		root:   root,
+		store:  st,
+		schema: schema,
+		byOID:  make(map[string]indexedObject, len(objects)),
+		byPath: make(map[string]indexedObject, len(objects)),
 	}
 	for _, object := range objects {
 		if _, duplicate := r.byOID[object.oid]; duplicate {
@@ -241,6 +239,9 @@ func (r *Router) Get(ctx context.Context, ds store.Datastore, path string) (Resu
 
 	value, err := r.store.Get(ctx, ds, parsed.String())
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return Result{}, fmt.Errorf("%w: %w", ErrNotFound, err)
+		}
 		return Result{}, err
 	}
 	return r.result(parsed.String(), value, !resolved.readOnly), nil
@@ -249,6 +250,11 @@ func (r *Router) Get(ctx context.Context, ds store.Datastore, path string) (Resu
 // Convert resolves path, checks that it is a writable leaf and coerces value
 // to the leaf's Go type, without touching the store.
 func (r *Router) Convert(path string, value any) (Result, error) {
+	return r.convert(path, value, false)
+}
+
+// convert is Convert with the read-only rule lifted for domain state writes.
+func (r *Router) convert(path string, value any, allowReadOnly bool) (Result, error) {
 	parsed, err := Parse(path)
 	if err != nil {
 		return Result{}, err
@@ -260,7 +266,7 @@ func (r *Router) Convert(path string, value any) (Result, error) {
 	if !isLeaf(resolved.value) {
 		return Result{}, fmt.Errorf("%w: %s is not a leaf", ErrNotFound, parsed.String())
 	}
-	if resolved.readOnly {
+	if resolved.readOnly && !allowReadOnly {
 		return Result{}, fmt.Errorf("%w: %s", ErrReadOnly, parsed.String())
 	}
 
@@ -296,6 +302,57 @@ func (r *Router) Set(ctx context.Context, ds store.Datastore, path string, value
 	return result, nil
 }
 
+// SetState writes a leaf tagged config:"false" — counters, learned MAC entries,
+// measured radio levels — which only the owning domain may do; management
+// planes go through Set, which rejects it.
+//
+// The value is written to the running and the candidate datastore. Candidate is
+// what Commit copies into running, so a later NETCONF commit would otherwise
+// drop the state a domain just wrote; read-only seed leaves already live in
+// both datastores for the same reason.
+func (r *Router) SetState(ctx context.Context, path string, value any) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	result, err := r.convert(path, value, true)
+	if err != nil {
+		return Result{}, err
+	}
+	for _, ds := range []store.Datastore{store.Running, store.Candidate} {
+		if err := r.store.Set(ctx, ds, result.Path, result.Value); err != nil {
+			return Result{}, err
+		}
+	}
+	return result, nil
+}
+
+// DeleteState removes a state leaf from the running and the candidate
+// datastore. A leaf that is already absent from candidate is not an error, so
+// deleting a learned entry twice is safe.
+func (r *Router) DeleteState(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	parsed, err := Parse(path)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolve(reflect.ValueOf(r.root), parsed.Segments)
+	if err != nil {
+		return err
+	}
+	if !isLeaf(resolved.value) {
+		return fmt.Errorf("%w: %s is not a leaf", ErrNotFound, parsed.String())
+	}
+
+	for _, ds := range []store.Datastore{store.Running, store.Candidate} {
+		if err := r.store.Delete(ctx, ds, parsed.String()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
 // Delete removes path from ds.
 func (r *Router) Delete(ctx context.Context, ds store.Datastore, path string) error {
 	if err := ctx.Err(); err != nil {
@@ -312,7 +369,13 @@ func (r *Router) Delete(ctx context.Context, ds store.Datastore, path string) er
 	if !isLeaf(resolved.value) {
 		return fmt.Errorf("%w: %s is not a leaf", ErrNotFound, parsed.String())
 	}
-	return r.store.Delete(ctx, ds, parsed.String())
+	if err := r.store.Delete(ctx, ds, parsed.String()); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: %w", ErrNotFound, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // List returns every leaf strictly below prefix in ds.
@@ -378,21 +441,44 @@ func (r *Router) Seed(ctx context.Context, ds store.Datastore) error {
 
 // Bindings returns every exposed SNMP object with its current value, sorted by
 // OID. Objects whose value is missing from the store are skipped.
+//
+// The OID table is applied to the device rebuilt from ds rather than to the
+// boot template, so tables that grow at runtime — VLANs, the MAC forwarding
+// database, STP ports — expose the instances the datastore actually holds.
 func (r *Router) Bindings(ctx context.Context, ds store.Datastore) ([]Binding, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	bindings := make([]Binding, 0, len(r.objects))
-	for _, object := range r.objects {
+	paths, err := r.store.List(ctx, ds, "")
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]any, len(paths))
+	for _, path := range paths {
+		value, err := r.store.Get(ctx, ds, path)
+		if err != nil {
+			return nil, err
+		}
+		values[path] = value
+	}
+
+	device, err := r.deviceFromValues(values)
+	if err != nil {
+		return nil, err
+	}
+	objects, err := buildObjects(device)
+	if err != nil {
+		return nil, err
+	}
+
+	bindings := make([]Binding, 0, len(objects))
+	for _, object := range objects {
 		value := object.constant
 		if object.path != "" {
-			stored, err := r.store.Get(ctx, ds, object.path)
-			if err != nil {
-				if errors.Is(err, store.ErrNotFound) {
-					continue
-				}
-				return nil, err
+			stored, ok := values[object.path]
+			if !ok {
+				continue
 			}
 			value = stored
 		}
