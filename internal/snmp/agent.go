@@ -286,8 +286,30 @@ func (a *Agent) getBulk(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosn
 }
 
 // set validates the whole proposed running configuration before applying any
-// of it, so a rejected value leaves the device untouched.
+// of it, so a rejected value leaves the device untouched. The snapshot, the
+// validation and the write run in one router transaction, and the write itself
+// is a single atomic batch, so a multi-varbind SET cannot be half-applied and
+// two concurrent management operations cannot lose each other's changes.
 func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.SnmpPDU, gosnmp.SNMPError, uint8) {
+	var (
+		variables []gosnmp.SnmpPDU
+		status    gosnmp.SNMPError
+		index     uint8
+	)
+	txErr := a.router.Transaction(ctx, func() error {
+		variables, status, index = a.applySet(ctx, request)
+		return nil
+	})
+	if txErr != nil {
+		// Only a transaction-level failure, such as cancellation, reaches here:
+		// a protocol rejection is reported through status.
+		return nil, gosnmp.GenErr, 0
+	}
+	return variables, status, index
+}
+
+// applySet is set's body. The caller holds the router's transaction.
+func (a *Agent) applySet(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.SnmpPDU, gosnmp.SNMPError, uint8) {
 	proposed, err := a.runningSnapshot(ctx)
 	if err != nil {
 		return nil, gosnmp.GenErr, 0
@@ -297,7 +319,7 @@ func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.S
 		return nil, gosnmp.GenErr, 0
 	}
 
-	changed := make([]string, 0, len(request.Variables))
+	changed := make(map[string]any, len(request.Variables))
 	for i, varbind := range request.Variables {
 		// The MIB access decides, so a writable model node that is exposed
 		// read-only (ifDescr, ifOperStatus) stays read-only over SNMP.
@@ -329,7 +351,7 @@ func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.S
 			}
 		}
 		proposed[result.Path] = result.Value
-		changed = append(changed, result.Path)
+		changed[result.Path] = result.Value
 	}
 
 	if err := a.router.Validate(ctx, proposed); err != nil {
@@ -337,10 +359,8 @@ func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.S
 		return nil, gosnmp.WrongValue, 1
 	}
 
-	for _, path := range changed {
-		if _, err := a.router.Set(ctx, store.Running, path, proposed[path]); err != nil {
-			return nil, gosnmp.GenErr, 0
-		}
+	if err := a.router.Apply(ctx, store.Running, changed, nil); err != nil {
+		return nil, gosnmp.GenErr, 0
 	}
 
 	// Echo the written objects in their canonical SNMP representation.

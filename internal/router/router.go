@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/DisMosGit/triadsim/internal/model"
 	"github.com/DisMosGit/triadsim/internal/store"
@@ -92,6 +93,12 @@ type Router struct {
 	schema *schemaNode
 	byOID  map[string]indexedObject
 	byPath map[string]indexedObject
+
+	// txMu serializes read-modify-write datastore transactions, so two planes
+	// cannot interleave a read with each other's write. It is taken by
+	// Transaction and never by Set or Delete, which stay single-store-operation
+	// calls.
+	txMu sync.Mutex
 }
 
 // New builds a router for root and st. It fails when the template cannot be
@@ -456,6 +463,44 @@ func (r *Router) Delete(ctx context.Context, ds store.Datastore, path string) er
 		return err
 	}
 	return nil
+}
+
+// Transaction runs fn as one datastore transaction, serialized against every
+// other transaction. A read-modify-write edit — the NETCONF and RESTCONF edit
+// pipeline in internal/datatree, an SNMP SET — uses it so that two planes
+// cannot interleave a read with each other's write; the write phase itself goes
+// through Apply, which is atomic.
+//
+// fn must not start a nested transaction: txMu is not reentrant.
+func (r *Router) Transaction(ctx context.Context, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+	return fn()
+}
+
+// Apply converts every value and applies the whole batch to ds atomically: the
+// store validates the entire batch before it mutates anything, then applies it
+// under one lock, so a rejected or interrupted batch cannot leave a
+// half-applied edit behind.
+//
+// Unlike Set, which checks ctx per leaf, Apply checks ctx once: the caller must
+// have built a complete batch before calling it.
+func (r *Router) Apply(ctx context.Context, ds store.Datastore, values map[string]any, deletions []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	converted := make(map[string]any, len(values))
+	for path, value := range values {
+		result, err := r.Convert(path, value)
+		if err != nil {
+			return err
+		}
+		converted[result.Path] = result.Value
+	}
+	return r.store.Apply(ctx, ds, converted, deletions)
 }
 
 // List returns every leaf strictly below prefix in ds.

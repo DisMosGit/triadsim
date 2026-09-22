@@ -227,6 +227,85 @@ func TestMemoryCommitKeepsRunningWrite(t *testing.T) {
 	assert.Equal(t, 2, got)
 }
 
+// Apply must validate the whole batch before it writes anything, so one bad
+// entry leaves the datastore untouched.
+func TestMemoryApplyIsAtomic(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		values    map[string]any
+		deletions []string
+	}{
+		{
+			name:   "invalid path",
+			values: map[string]any{"a/1": 1, "/bad": 2},
+		},
+		{
+			name:   "invalid value",
+			values: map[string]any{"a/1": 1, "a/2": int64(2)},
+		},
+		{
+			name:      "invalid deletion path",
+			values:    map[string]any{"a/1": 1},
+			deletions: []string{"a//b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMemory()
+			set(t, m, Running, "existing/1", 7)
+
+			err := m.Apply(ctx, Running, tt.values, tt.deletions)
+			require.Error(t, err)
+
+			for _, ds := range []Datastore{Running, Candidate} {
+				got, getErr := m.Get(ctx, ds, "existing/1")
+				require.NoError(t, getErr, "%s must be untouched", ds)
+				assert.Equal(t, 7, got)
+
+				_, getErr = m.Get(ctx, ds, "a/1")
+				assert.True(t, errors.Is(getErr, ErrNotFound), "%s must not hold a rejected entry", ds)
+			}
+		})
+	}
+}
+
+// Apply mirrors a batch targeting running into candidate, exactly like Set.
+func TestMemoryApplyMirrorsRunning(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	set(t, m, Running, "a/9", 9)
+
+	require.NoError(t, m.Apply(ctx, Running, map[string]any{"a/1": 1, "a/2": 2}, []string{"a/9"}))
+
+	for _, ds := range []Datastore{Running, Candidate} {
+		got, err := m.Get(ctx, ds, "a/1")
+		require.NoError(t, err)
+		assert.Equal(t, 1, got)
+
+		_, err = m.Get(ctx, ds, "a/9")
+		assert.True(t, errors.Is(err, ErrNotFound), "%s must not keep the deleted leaf", ds)
+	}
+
+	changes, err := m.Diff(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, changes)
+}
+
+// A deletion of a path that is already gone is not an error: removing the
+// leaves of a subtree uses Apply.
+func TestMemoryApplyToleratesMissingDeletions(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+
+	require.NoError(t, m.Apply(ctx, Running, nil, []string{"a/1"}))
+
+	_, err := m.Get(ctx, Running, "a/1")
+	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
 func TestMemoryList(t *testing.T) {
 	ctx := context.Background()
 	m := newMemory()

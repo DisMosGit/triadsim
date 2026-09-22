@@ -99,6 +99,11 @@ type Store interface {
 	// Delete removes path from ds, or returns ErrNotFound. Removing a path
 	// from Running also removes it from Candidate.
 	Delete(ctx context.Context, ds Datastore, path string) error
+	// Apply atomically applies values and deletions to ds. Every path and
+	// value is validated before anything is written, so a rejected batch
+	// leaves ds untouched; a deletion that is already absent is not an error.
+	// A batch targeting Running is mirrored into Candidate.
+	Apply(ctx context.Context, ds Datastore, values map[string]any, deletions []string) error
 	// List returns every path in ds below prefix, in lexicographic order.
 	List(ctx context.Context, ds Datastore, prefix string) ([]string, error)
 	// Diff returns the changes between candidate and running.

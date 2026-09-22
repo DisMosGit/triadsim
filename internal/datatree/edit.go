@@ -35,13 +35,22 @@ type Request struct {
 
 // Apply edits one datastore with the request's documents. The edits are applied
 // to a proposed snapshot of the datastore, the snapshot is validated as a whole
-// and only then written back, so a rejected edit leaves the datastore
-// untouched.
+// and only then written back as one atomic batch, so a rejected or interrupted
+// edit leaves the datastore untouched. The whole read-modify-write runs inside
+// one router transaction, so concurrent edits cannot interleave and lose each
+// other's changes.
 func Apply(ctx context.Context, r *router.Router, ds store.Datastore, req Request) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return r.Transaction(ctx, func() error {
+		return apply(ctx, r, ds, req)
+	})
+}
 
+// apply is Apply's body. The caller holds the router's edit transaction, so the
+// snapshot cannot change between the read and the write.
+func apply(ctx context.Context, r *router.Router, ds store.Datastore, req Request) error {
 	results, err := collect(ctx, r, ds)
 	if err != nil {
 		return err
@@ -74,23 +83,26 @@ func Apply(ctx context.Context, r *router.Router, ds store.Datastore, req Reques
 }
 
 // applyDiff writes the difference between the original and the proposed
-// snapshot to the datastore.
+// snapshot to the datastore as a single atomic batch, so an error or a
+// cancellation cannot leave a half-applied edit behind.
 func applyDiff(ctx context.Context, r *router.Router, ds store.Datastore, original, proposed map[string]any) error {
+	sets := make(map[string]any)
+	deletions := make([]string, 0)
 	for path, value := range proposed {
 		if old, ok := original[path]; ok && old == value {
 			continue
 		}
-		if _, err := r.Set(ctx, ds, path, value); err != nil {
-			return Failed(err)
-		}
+		sets[path] = value
 	}
 	for path := range original {
 		if _, ok := proposed[path]; ok {
 			continue
 		}
-		if err := r.Delete(ctx, ds, path); err != nil {
-			return Failed(err)
-		}
+		deletions = append(deletions, path)
+	}
+
+	if err := r.Apply(ctx, ds, sets, deletions); err != nil {
+		return Failed(err)
 	}
 	return nil
 }

@@ -17,6 +17,9 @@ type stub struct{}
 func (stub) Get(context.Context, Datastore, string) (any, error) { return nil, ErrNotFound }
 func (stub) Set(context.Context, Datastore, string, any) error   { return nil }
 func (stub) Delete(context.Context, Datastore, string) error     { return ErrNotFound }
+func (stub) Apply(context.Context, Datastore, map[string]any, []string) error {
+	return nil
+}
 func (stub) List(context.Context, Datastore, string) ([]string, error) {
 	return nil, nil
 }

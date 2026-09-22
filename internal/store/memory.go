@@ -199,6 +199,47 @@ func (m *Memory) Delete(ctx context.Context, ds Datastore, path string) error {
 	return nil
 }
 
+// Apply atomically applies values and deletions to ds. Every path and value is
+// validated before anything is written, so a rejected batch leaves ds
+// untouched. A deletion that is already absent is not an error, because
+// removing the leaves of a subtree is the normal case. A batch targeting
+// Running is mirrored into Candidate, like Set and Delete.
+func (m *Memory) Apply(ctx context.Context, ds Datastore, values map[string]any, deletions []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for path, value := range values {
+		if !validPath(path) {
+			return fmt.Errorf("%w: %q", ErrInvalidPath, path)
+		}
+		if _, ok := leafKindOf(value); !ok {
+			return fmt.Errorf("%w: %T", ErrInvalidValue, value)
+		}
+	}
+	for _, path := range deletions {
+		if !validPath(path) {
+			return fmt.Errorf("%w: %q", ErrInvalidPath, path)
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	target, err := m.datastore(ds)
+	if err != nil {
+		return err
+	}
+	for path, value := range values {
+		target[path] = value
+		m.mirror(ds, path, value, false)
+	}
+	for _, path := range deletions {
+		delete(target, path)
+		m.mirror(ds, path, nil, true)
+	}
+	return nil
+}
+
 // List returns every path in ds strictly below prefix, in lexicographic order.
 // An empty prefix lists the whole datastore. The prefix itself is never
 // included, because the store holds leaves only.
