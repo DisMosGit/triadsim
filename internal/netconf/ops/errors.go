@@ -1,6 +1,10 @@
 package ops
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/DisMosGit/triadsim/internal/datatree"
+)
 
 // NETCONF error-type values (RFC 6241 §7.5.3).
 const (
@@ -133,4 +137,21 @@ func NotSupported(format string, args ...any) *Error {
 // Failed wraps a device failure, for example a store write error.
 func Failed(err error) *Error {
 	return newError(TypeApplication, TagOperationFailed, "%v", err)
+}
+
+// fromDataTree maps a data-tree error onto the NETCONF error type, preserving
+// the tag so a reply and the tests see the same protocol error as before the
+// engine moved into internal/datatree. Any other error is an operation failure.
+func fromDataTree(err error) *Error {
+	treeErr, ok := datatree.AsError(err)
+	if !ok {
+		return Failed(err)
+	}
+	return &Error{
+		Type:     treeErr.Type,
+		Tag:      treeErr.Tag,
+		Severity: SeverityError,
+		Message:  treeErr.Message,
+		Path:     treeErr.Path,
+	}
 }

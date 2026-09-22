@@ -2,11 +2,8 @@ package ops
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strconv"
-	"strings"
 
+	"github.com/DisMosGit/triadsim/internal/datatree"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
 )
@@ -28,16 +25,18 @@ func GetConfig(ctx context.Context, deps Deps, operation *Element) (*Element, er
 		return nil, opErr
 	}
 
-	values, err := collectValues(ctx, deps, datastore)
+	root, err := datatree.Read(ctx, deps.Router, datastore, datatree.ReadOptions{})
 	if err != nil {
-		return nil, err
+		return nil, fromDataTree(err)
+	}
+
+	nodes := root.Children
+	if filter != nil {
+		nodes = pruneNodes(nodes, filter.level())
 	}
 
 	data := NewElement("data")
-	w := &walker{deps: deps, values: values}
-	if _, err := w.build(ctx, data, "", filter.level(), "", ""); err != nil {
-		return nil, err
-	}
+	renderNodes(data, nodes, "")
 	return data, nil
 }
 
@@ -73,19 +72,39 @@ func datastoreElement(container *Element) (store.Datastore, *Error) {
 	}
 }
 
-// collectValues returns every leaf of one datastore keyed by its canonical
-// router path.
-func collectValues(ctx context.Context, deps Deps, ds store.Datastore) (map[string]router.Result, error) {
-	results, err := deps.Router.List(ctx, ds, "")
-	if err != nil {
-		return nil, Failed(err)
-	}
+// renderNodes appends the XML elements of nodes to parent and reports whether
+// it appended anything. currentNS is the namespace the parent already declares;
+// an element declares the module namespace only when it differs.
+func renderNodes(parent *Element, nodes []*datatree.Node, currentNS string) bool {
+	appended := false
+	for _, node := range nodes {
+		switch node.Kind {
+		case router.KindLeaf:
+			element, _ := elementFor(node.Path, node.Name, currentNS)
+			element.Text = datatree.FormatLeaf(node.Value)
+			parent.Append(element)
+			appended = true
 
-	values := make(map[string]router.Result, len(results))
-	for _, result := range results {
-		values[result.Path] = result
+		case router.KindContainer:
+			element, childNS := elementFor(node.Path, node.Name, currentNS)
+			if !renderNodes(element, node.Children, childNS) {
+				continue
+			}
+			parent.Append(element)
+			appended = true
+
+		case router.KindList:
+			for _, entry := range node.Children {
+				element, entryNS := elementFor(entry.Path, node.Name, currentNS)
+				if !renderNodes(element, entry.Children, entryNS) {
+					continue
+				}
+				parent.Append(element)
+				appended = true
+			}
+		}
 	}
-	return values, nil
+	return appended
 }
 
 // filter is a parsed <filter>. A nil filter selects the whole datastore.
@@ -165,215 +184,91 @@ func (l filterLevel) child(name string) (*filterNode, filterLevel, bool) {
 	return nil, filterLevel{}, false
 }
 
-// walker walks the schema, the stored values and the filter together and builds
-// the data element of the reply.
-type walker struct {
-	deps   Deps
-	values map[string]router.Result
-}
-
-// build appends the selected children of the node at prefix to parent and
-// reports whether it appended anything. skip names a child that must not be
-// emitted, which is how a list entry skips the key it already wrote.
-func (w *walker) build(ctx context.Context, parent *Element, prefix string, level filterLevel, ns, skip string) (bool, error) {
-	children, err := w.deps.Router.Children(prefix)
-	if err != nil {
-		return false, Failed(err)
-	}
-
-	appended := false
-	for _, child := range children {
-		if child.Name == skip {
-			continue
-		}
-		node, childLevel, ok := level.child(child.Name)
+// pruneNodes keeps the parts of a read tree the filter selects. It applies the
+// same rules the walker used: a level that selects all keeps every child, a
+// leaf matches on content when the filter carries text, and an empty container
+// or list disappears.
+func pruneNodes(nodes []*datatree.Node, level filterLevel) []*datatree.Node {
+	kept := make([]*datatree.Node, 0, len(nodes))
+	for _, node := range nodes {
+		matched, childLevel, ok := level.child(node.Name)
 		if !ok {
 			continue
 		}
-		path := join(prefix, child.Name)
 
-		switch child.Kind {
+		switch node.Kind {
 		case router.KindLeaf:
-			result, ok := w.values[path]
-			if !ok || !result.Writable {
+			if matched != nil && matched.hasText && !datatree.ContentMatches(node.Leaf, matched.text, node.Value) {
 				continue
 			}
-			if node != nil && node.hasText && !contentMatches(child.Leaf, node.text, result.Value) {
-				continue
-			}
-			element, _ := elementFor(path, child.Name, ns)
-			element.Text = formatLeaf(result.Value)
-			parent.Append(element)
-			appended = true
+			kept = append(kept, node)
 
 		case router.KindContainer:
-			element, childNS := elementFor(path, child.Name, ns)
-			inner, err := w.build(ctx, element, path, childLevel, childNS, "")
-			if err != nil {
-				return false, err
-			}
-			if !inner {
+			inner := pruneNodes(node.Children, childLevel)
+			if len(inner) == 0 {
 				continue
 			}
-			parent.Append(element)
-			appended = true
+			node.Children = inner
+			kept = append(kept, node)
 
 		case router.KindList:
-			wrote, err := w.buildList(ctx, parent, prefix, child, node, childLevel, ns)
-			if err != nil {
-				return false, err
+			entries := pruneEntries(node, matched, childLevel)
+			if len(entries) == 0 {
+				continue
 			}
-			appended = appended || wrote
+			node.Children = entries
+			kept = append(kept, node)
 		}
 	}
-	return appended, nil
+	return kept
 }
 
-// buildList appends one element per selected list instance.
-func (w *walker) buildList(ctx context.Context, parent *Element, prefix string, list router.Node, node *filterNode, level filterLevel, ns string) (bool, error) {
-	entries := instancesOf(w.values, prefix, list.Name)
-	if len(entries) == 0 {
-		return false, nil
-	}
-
-	// The schema of a list entry is the same for every instance, so the first
-	// one is enough to find the key leaf and sort by it.
-	entryChildren, err := w.deps.Router.Children(entries[0].path)
-	if err != nil {
-		return false, Failed(err)
-	}
-	keyNode := nodeNamed(entryChildren, list.Key)
-	if keyNode == nil {
-		return false, Failed(fmt.Errorf("list %s has no key node %s", list.Name, list.Key))
-	}
-	sortEntries(entries, keyNode.Leaf)
-
-	appended := false
-	for _, entry := range entries {
-		if !entrySelected(node, entry, *keyNode, w.values) {
+// pruneEntries keeps the list entries the filter selects. The key leaf is
+// always kept, as YANG XML encoding requires; the remaining children are
+// narrowed by the list filter's children.
+func pruneEntries(list *datatree.Node, node *filterNode, level filterLevel) []*datatree.Node {
+	kept := make([]*datatree.Node, 0, len(list.Children))
+	for _, entry := range list.Children {
+		if !entrySelected(node, entry, list.Key) {
 			continue
 		}
-		element, entryNS := elementFor(entry.path, list.Name, ns)
-		wrote, err := w.buildEntry(ctx, element, entry, level, entryNS, list.Key)
-		if err != nil {
-			return false, err
+
+		children := make([]*datatree.Node, 0, len(entry.Children))
+		rest := make([]*datatree.Node, 0, len(entry.Children))
+		for _, child := range entry.Children {
+			if child.Name == list.Key {
+				children = append(children, child)
+				continue
+			}
+			rest = append(rest, child)
 		}
-		if !wrote {
+		children = append(children, pruneNodes(rest, level)...)
+		if len(children) == 0 {
 			continue
 		}
-		parent.Append(element)
-		appended = true
+		entry.Children = children
+		kept = append(kept, entry)
 	}
-	return appended, nil
-}
-
-// buildEntry writes one list entry: the key leaf first, as YANG XML encoding
-// requires, then every selected child.
-func (w *walker) buildEntry(ctx context.Context, element *Element, entry listEntry, level filterLevel, ns, keyName string) (bool, error) {
-	appended := false
-
-	keyPath := join(entry.path, keyName)
-	if result, ok := w.values[keyPath]; ok && result.Writable {
-		keyElement, _ := elementFor(keyPath, keyName, ns)
-		keyElement.Text = formatLeaf(result.Value)
-		element.Append(keyElement)
-		appended = true
-	}
-
-	inner, err := w.build(ctx, element, entry.path, level, ns, keyName)
-	if err != nil {
-		return false, err
-	}
-	return appended || inner, nil
-}
-
-// listEntry is one instance of a list in the datastore.
-type listEntry struct {
-	segment string // interface[name=radio0]
-	key     string // radio0
-	path    string // interfaces/interface[name=radio0]
-}
-
-// instancesOf returns the list instances that appear in values below prefix.
-// The order is unspecified; sortEntries orders them.
-func instancesOf(values map[string]router.Result, prefix, name string) []listEntry {
-	depth := 0
-	if prefix != "" {
-		parsed, err := router.Parse(prefix)
-		if err != nil {
-			return nil
-		}
-		depth = len(parsed.Segments)
-	}
-
-	needle := prefix + "/"
-	if prefix == "" {
-		needle = ""
-	}
-
-	seen := make(map[string]struct{})
-	var entries []listEntry
-	for path := range values {
-		if !strings.HasPrefix(path, needle) {
-			continue
-		}
-		parsed, err := router.Parse(path)
-		if err != nil || len(parsed.Segments) <= depth {
-			continue
-		}
-		segment := parsed.Segments[depth]
-		if segment.Name != name || segment.Key == "" {
-			continue
-		}
-		text := segment.Name + "[" + segment.Key + "=" + segment.Value + "]"
-		if _, duplicate := seen[text]; duplicate {
-			continue
-		}
-		seen[text] = struct{}{}
-
-		entry := listEntry{segment: text, key: segment.Value}
-		if prefix == "" {
-			entry.path = text
-		} else {
-			entry.path = prefix + "/" + text
-		}
-		entries = append(entries, entry)
-	}
-	return entries
+	return kept
 }
 
 // entrySelected reports whether a filter selects a list entry. Without a filter
 // node, or without a key leaf in it, every entry is selected.
-func entrySelected(node *filterNode, entry listEntry, keyNode router.Node, values map[string]router.Result) bool {
+func entrySelected(node *filterNode, entry *datatree.Node, keyName string) bool {
 	if node == nil {
 		return true
 	}
 	for _, child := range node.children {
-		if child.name != keyNode.Name || !child.hasText {
+		if child.name != keyName || !child.hasText {
 			continue
 		}
-		result, ok := values[join(entry.path, keyNode.Name)]
-		if !ok {
+		key := entry.Child(keyName)
+		if key == nil {
 			return false
 		}
-		return contentMatches(keyNode.Leaf, child.text, result.Value)
+		return datatree.ContentMatches(key.Leaf, child.text, key.Value)
 	}
 	return true
-}
-
-// sortEntries orders list entries by key, numerically when the key is numeric.
-func sortEntries(entries []listEntry, kind router.LeafKind) {
-	numeric := kind != router.LeafString && kind != router.LeafBool
-	sort.Slice(entries, func(i, j int) bool {
-		if numeric {
-			left, lerr := strconv.ParseFloat(entries[i].key, 64)
-			right, rerr := strconv.ParseFloat(entries[j].key, 64)
-			if lerr == nil && rerr == nil {
-				return left < right
-			}
-		}
-		return entries[i].key < entries[j].key
-	})
 }
 
 // elementFor builds an element and declares the module namespace when it
@@ -387,22 +282,4 @@ func elementFor(path, name, currentNS string) (*Element, string) {
 	}
 	element.Space = ns
 	return element, ns
-}
-
-// nodeNamed returns the schema child named name, or nil.
-func nodeNamed(children []router.Node, name string) *router.Node {
-	for i := range children {
-		if children[i].Name == name {
-			return &children[i]
-		}
-	}
-	return nil
-}
-
-// join appends one segment to a router path.
-func join(prefix, name string) string {
-	if prefix == "" {
-		return name
-	}
-	return prefix + "/" + name
 }

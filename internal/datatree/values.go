@@ -1,4 +1,4 @@
-package ops
+package datatree
 
 import (
 	"fmt"
@@ -7,10 +7,10 @@ import (
 	"github.com/DisMosGit/triadsim/internal/router"
 )
 
-// parseLeaf converts the character data of a leaf into the Go value the store
-// holds for it. The leaf kind comes from the router schema, so a value that
-// does not fit its model type is rejected before it reaches the store.
-func parseLeaf(kind router.LeafKind, text string) (any, error) {
+// ParseLeaf converts character data into the Go value the store holds for a
+// leaf. The leaf kind comes from the router schema, so a value that does not
+// fit its model type is rejected before it reaches the store.
+func ParseLeaf(kind router.LeafKind, text string) (any, error) {
 	switch kind {
 	case router.LeafBool:
 		value, err := strconv.ParseBool(text)
@@ -69,8 +69,8 @@ func parseLeaf(kind router.LeafKind, text string) (any, error) {
 	}
 }
 
-// formatLeaf renders a store value as XML character data.
-func formatLeaf(value any) string {
+// FormatLeaf renders a store value as XML character data.
+func FormatLeaf(value any) string {
 	switch v := value.(type) {
 	case bool:
 		return strconv.FormatBool(v)
@@ -93,11 +93,11 @@ func formatLeaf(value any) string {
 	}
 }
 
-// contentMatches reports whether a filter's text selects a stored leaf value.
+// ContentMatches reports whether a filter's text selects a stored leaf value.
 // The text is parsed with the leaf's kind, so "20" and "20.0" both match the
 // same float leaf.
-func contentMatches(kind router.LeafKind, text string, value any) bool {
-	parsed, err := parseLeaf(kind, text)
+func ContentMatches(kind router.LeafKind, text string, value any) bool {
+	parsed, err := ParseLeaf(kind, text)
 	if err != nil {
 		return false
 	}
