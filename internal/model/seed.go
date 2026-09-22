@@ -15,6 +15,7 @@ func DefaultDevice() *Device {
 		RSSI:       -72.5,
 		FadeMargin: 12.5,
 		Capacity:   112,
+		LinkState:  RadioLinkStateUp,
 		LinkBudget: LinkBudget{
 			LinkLength:    12.5,
 			Frequency:     18,

@@ -65,6 +65,7 @@ func validRadioLink() RadioLink {
 		RSSI:       -72.5,
 		FadeMargin: 12.5,
 		Capacity:   112,
+		LinkState:  RadioLinkStateUp,
 		LinkBudget: validLinkBudget(),
 		ATPC:       validATPC(),
 		ACM:        validACM(),
@@ -89,6 +90,10 @@ func TestRadioLinkValidate(t *testing.T) {
 		{name: "rssi below minimum", mutate: func(r *RadioLink) { r.RSSI = -99.1 }, wantErr: true},
 		{name: "rssi above maximum", mutate: func(r *RadioLink) { r.RSSI = -19.9 }, wantErr: true},
 		{name: "capacity zero", mutate: func(r *RadioLink) { r.Capacity = 0 }, wantErr: true},
+		{name: "link-state degraded", mutate: func(r *RadioLink) { r.LinkState = RadioLinkStateDegraded }},
+		{name: "link-state down", mutate: func(r *RadioLink) { r.LinkState = RadioLinkStateDown }},
+		{name: "empty link-state", mutate: func(r *RadioLink) { r.LinkState = "" }, wantErr: true},
+		{name: "unknown link-state", mutate: func(r *RadioLink) { r.LinkState = "flapping" }, wantErr: true},
 		{name: "fade-margin NaN", mutate: func(r *RadioLink) { r.FadeMargin = math.NaN() }, wantErr: true},
 		{name: "no profiles", mutate: func(r *RadioLink) { r.Profiles = nil }},
 		{name: "duplicate profile id", mutate: func(r *RadioLink) {

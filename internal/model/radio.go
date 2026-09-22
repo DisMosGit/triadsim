@@ -29,6 +29,14 @@ const (
 	ACMModeFixed    = "fixed"
 )
 
+// Radio-link operational states. They are written by the radio domain into the
+// read-only link-state leaf and are what its alarms report.
+const (
+	RadioLinkStateUp       = "up"
+	RadioLinkStateDegraded = "degraded"
+	RadioLinkStateDown     = "down"
+)
+
 // ACM profile index bounds. Profiles are the entries of RadioLink.Profiles.
 const (
 	MinACMProfile uint8 = 1
@@ -45,6 +53,7 @@ type RadioLink struct {
 	RSSI       float64      `path:"rssi" xml:"rssi" json:"rssi" config:"false"`
 	FadeMargin float64      `path:"fade-margin" xml:"fade-margin" json:"fade-margin" config:"false"`
 	Capacity   uint32       `path:"capacity" xml:"capacity" json:"capacity" config:"false"`
+	LinkState  string       `path:"link-state" xml:"link-state" json:"link-state" config:"false"`
 	LinkBudget LinkBudget   `path:"link-budget" xml:"link-budget" json:"link-budget"`
 	ATPC       ATPC         `path:"atpc" xml:"atpc" json:"atpc"`
 	ACM        ACM          `path:"acm" xml:"acm" json:"acm"`
@@ -112,6 +121,12 @@ func (r RadioLink) Validate() error {
 	}
 	if r.Capacity == 0 {
 		return fmt.Errorf("radio-link %s: capacity must be greater than 0", r.Name)
+	}
+	switch r.LinkState {
+	case RadioLinkStateUp, RadioLinkStateDegraded, RadioLinkStateDown:
+	default:
+		return fmt.Errorf("radio-link %s: unknown link-state %q (want %s, %s or %s)",
+			r.Name, r.LinkState, RadioLinkStateUp, RadioLinkStateDegraded, RadioLinkStateDown)
 	}
 	if err := r.LinkBudget.Validate(); err != nil {
 		return fmt.Errorf("radio-link %s: link-budget: %w", r.Name, err)

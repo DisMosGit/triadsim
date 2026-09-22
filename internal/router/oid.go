@@ -122,6 +122,7 @@ var objectRules = []objectRule{
 	{scope: scopeRadio, suffix: "atpc/enabled", oid: EnterpriseOID + ".1.1.5", typ: TypeInteger, convert: truthValue, decode: truthFromInt, writable: true},
 	{scope: scopeRadio, suffix: "acm/current-profile", oid: EnterpriseOID + ".1.1.6", typ: TypeInteger},
 	{scope: scopeRadio, suffix: "acm/current-capacity", oid: EnterpriseOID + ".1.1.7", typ: TypeGauge32},
+	{scope: scopeRadio, suffix: "link-state", oid: EnterpriseOID + ".1.1.8", typ: TypeInteger, convert: linkStateValue},
 
 	// Vendor synchronization objects. The clock is a single object (scalar
 	// ".0"); the SyncE interface table is indexed by the interface index, the
@@ -290,6 +291,23 @@ func ptpStateValue(v any) any {
 		return 4
 	case "holdover-out-of-spec":
 		return 5
+	default:
+		return 1
+	}
+}
+
+// linkStateValue maps a radio link-state onto the integer the vendor object
+// reports: up(1), degraded(2), down(3). An unknown state is reported as up(1).
+func linkStateValue(v any) any {
+	name, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch name {
+	case "degraded":
+		return 2
+	case "down":
+		return 3
 	default:
 		return 1
 	}

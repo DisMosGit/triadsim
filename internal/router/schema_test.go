@@ -109,7 +109,7 @@ func TestChildrenOfNestedRadioLink(t *testing.T) {
 	children, err := r.Children("interfaces/interface[name=radio0]/radio-link")
 	require.NoError(t, err)
 	assert.Equal(t,
-		[]string{"name", "tx-power", "rssi", "fade-margin", "capacity", "link-budget", "atpc", "acm", "modulation-profile"},
+		[]string{"name", "tx-power", "rssi", "fade-margin", "capacity", "link-state", "link-budget", "atpc", "acm", "modulation-profile"},
 		nodeNames(children))
 	assert.Equal(t, LeafFloat64, findNode(t, children, "tx-power").Leaf)
 
