@@ -333,13 +333,21 @@ An event notification is a complete XML document (RFC 5277 §2.2.1), framed with
 negotiated framing (end-of-message for `base:1.0`, chunked for `base:1.1`):
 
 ```xml
-<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0"><eventTime>2024-01-02T03:04:05Z</eventTime><event xmlns="urn:sim:sim-events"><type>AlarmRaised</type><resource>radio0</resource><severity>major</severity><message>radio link down</message></event></notification>
+<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0"><eventTime>2024-01-02T03:04:05Z</eventTime><event xmlns="urn:sim:sim-events"><type>AlarmRaised</type><resource>radio0</resource><severity>critical</severity><message>radio link down: rssi -99.0 dBm</message><alarm>radioLinkDown</alarm></event></notification>
+```
+
+A `StateTransition` carries the states it left and entered instead:
+
+```xml
+<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0"><eventTime>2024-01-02T03:04:06Z</eventTime><event xmlns="urn:sim:sim-events"><type>StateTransition</type><resource>ptp/clock</resource><message>ptp clock: locked -&gt; holdover-in-spec (radio link radio0 down)</message><from>locked</from><to>holdover-in-spec</to></event></notification>
 ```
 
 - `eventTime` is the event's timestamp in RFC 3339 UTC; it is set by the publishing domain, or by
   the event bus when the publisher left it zero.
 - `<event>` mirrors `event.Event`: `type` (`AlarmRaised`, `AlarmCleared`, `ConfigChanged`,
-  `StateTransition`), `resource`, optional `severity` and optional `message`. The same payload is
+  `StateTransition`), `resource`, optional `severity` and `message`, and the optional structured
+  fields `alarm`, `from` and `to`. An alarm keeps its name across the raised and the cleared
+  notification, so a client can correlate them without parsing `message`. The same payload is
   what a RESTCONF `sim-events:event` stream would carry; RESTCONF event streams are not
   implemented (Phase 4 answers `/restconf/streams` with `501 operation-not-supported`).
 - Every EventBus event is rendered once and queued for every subscribed session. A session that

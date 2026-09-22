@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Local pre-flight check: formatting, vet and unit tests.
-# Integration tests (testcontainers, build tag "integration") are not run here;
-# they land in Phase 6 and will need Docker.
+# The integration tests (testcontainers, build tag "integration", Docker required)
+# are run separately: go test -tags=integration ./...
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

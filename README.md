@@ -12,20 +12,24 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 5 — synchronization.** The repository builds, tests and starts; the
+> **Status: Phase 6 — alarms, traps, metrics and CLI.** The repository builds, tests and starts; the
 > foundations, managed-object models (radio, L2, sync, device), the running/candidate/startup
-> store, the router, the SNMP v2c agent with the Prometheus endpoint, the NETCONF subsystem
-> (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with rollback,
-> `create-subscription` notifications), the chi-based RESTCONF server, the L2 domain (VLAN and
-> QinQ, MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm simulation)
-> and the sync domain (PTP state machine with holdover, SyncE source selection, ESMC/SSM quality
-> levels, simulated offset/jitter, vendor SNMP OIDs and `POST /api/simulate/sync-loss`) are in
-> place. The radio domain and the cross-domain scenario land in Phase 6; see
-> [ROADMAP.md](ROADMAP.md).
+> store, the router, the SNMP v2c agent **and trap sender** with the Prometheus endpoint, the
+> NETCONF subsystem (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with
+> rollback, `create-subscription` notifications), the chi-based RESTCONF server, the L2 domain
+> (VLAN and QinQ, MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm
+> simulation), the sync domain (PTP state machine with holdover, SyncE source selection, ESMC/SSM
+> quality levels, simulated offset/jitter) and the **radio domain** (link budget, ATPC, ACM,
+> `radioLinkDown`/`radioLinkDegraded`) are in place, and the cross-domain scenario runs end to end:
+> one `POST /api/simulate/radio-failure` produces the alarm, the PTP holdover, an SNMP trap, a
+> NETCONF notification and the `simulator_alarms_total` counter. The CLI gained `alarm inject`,
+> `dump`, `config validate` and `version`. See [ROADMAP.md](ROADMAP.md) and
+> [docs/demo.md](docs/demo.md).
 
 ## Quick start
 
-Requirements: Go 1.27+ (Docker is optional and only needed for integration tests in later phases).
+Requirements: Go 1.27+ (Docker is optional and only needed for the integration tests,
+`go test -tags=integration ./...`).
 
 ```bash
 go mod download
@@ -47,6 +51,12 @@ snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2   # MAC -> bridge 
 
 # and the NETCONF subsystem on :1830 (any user, no password)
 ssh -p 1830 -s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost netconf
+
+# the cross-domain scenario: fail the radio link, then watch the PTP clock follow
+snmptrapd -f -Lo -p 1162 &                     # another shell
+go run ./cmd/simulator alarm inject --type radioLinkDown --link radio0
+curl -s localhost:8080/restconf/data/sim-sync:ptp/clock/state   # {"sim-sync:state":"holdover-in-spec"}
+curl -s localhost:9090/metrics | grep simulator_alarms_total
 ```
 
 Configuration lives in [`configs/default.yaml`](configs/default.yaml); every field has a
@@ -103,14 +113,30 @@ snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2
 # SNMPv2-SMI::mib-2.17.4.3.1.2.2.0.0.0.0.2 = INTEGER: 3
 ```
 
-The cross-domain scenario — radio failure → PTP holdover → SNMP trap + NETCONF notification +
-metric — is described in `.docs/desicion.md` §3.6 and will be reproduced by `scripts/demo.sh`.
+The cross-domain scenario is the Phase 6 check: one radio failure becomes an alarm, a PTP holdover,
+an SNMP trap, a NETCONF notification and a metric.
+
+```bash
+snmptrapd -f -Lo -p 1162 &                                   # trap receiver
+curl -X POST http://localhost:8080/api/simulate/radio-failure -d '{"link":"radio0"}'
+# {"link":"radio0","state":"down","status":"ok"}
+
+curl -s http://localhost:8080/restconf/data/sim-sync:ptp/clock/state   # holdover-in-spec
+curl -s http://localhost:9090/metrics | grep simulator_alarms_total
+# simulator_alarms_total{severity="critical",type="radio"} 1
+
+curl -X POST http://localhost:8080/api/simulate/radio-restore -d '{"link":"radio0"}'
+# the clock locks again; simRadioLinkUp and simulator_alarms_total{severity="cleared"} follow
+```
+
+[docs/demo.md](docs/demo.md) walks through the whole scenario, and
+[docs/cli.md](docs/cli.md) documents the commands; `scripts/demo.sh` reproduces it in one go.
 
 ## Repository layout
 
 ```
 cmd/simulator/       binary entry point, delegates to internal/cli
-internal/cli/        cobra commands (start, ...)
+internal/cli/        cobra commands (start, alarm inject, dump, config validate, version)
 internal/config/     YAML configuration, defaults and validation
 internal/log/        log/slog JSON logging on stderr
 internal/event/      EventBus on Go channels
@@ -118,15 +144,15 @@ internal/clock/      injectable Clock, RealClock and FakeClock
 internal/store/      running / candidate / startup datastores
 internal/router/     path <-> model, OID <-> path, RPC dispatch
 internal/model/      managed-object structs (path/xml/json tags)
-internal/radio/      RRL domain: link budget, ATPC, ACM, alarms
+internal/radio/      RRL domain: link budget, ATPC, ACM, alarms, failure injection
 internal/l2/         L2 domain: VLAN/QinQ, MAC table, STP/RSTP, LLDP, counters, storms
 internal/datatree/   data-tree read/edit engine shared by the NETCONF and RESTCONF codecs
-internal/sync/       sync domain: PTP, SyncE, ESMC/SSM, holdover
+internal/sync/       sync domain: PTP, SyncE, ESMC/SSM, holdover, cross-domain reaction
 internal/{snmp,netconf,restconf,gnmi,metrics}/   management planes
 internal/netconf/notif/                          RFC 5277 create-subscription and notification dispatch
 internal/tools/      blank imports pinning the approved dependency stack
 configs/             YAML configuration
-docs/                architecture, store, eventbus, config, ADRs, protocols
+docs/                architecture, store, eventbus, config, cli, metrics, demo, ADRs, protocols
 scripts/             check.sh, demo.sh
 test/integration/    testcontainers-based integration tests (build tag `integration`)
 testdata/            golden files (testdata/netconf/ NETCONF transcripts)
@@ -138,7 +164,7 @@ yang/                YANG modules (documentation only, embedded)
 - [ROADMAP.md](ROADMAP.md) — phased plan and definition of done.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — branches, commit conventions, code style, tests.
 - [AGENTS.md](AGENTS.md) — instructions for agentic IDEs.
-- `docs/` — architecture, store, event bus, configuration and ADRs.
+- `docs/` — architecture, store, event bus, configuration, CLI, metrics, demo and ADRs.
 - `docs/protocols/` — SNMP, NETCONF, RESTCONF, PTP, SyncE, L2, RRL references.
 
 ## License

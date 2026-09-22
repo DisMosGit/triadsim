@@ -28,6 +28,7 @@ The implementation lives in `internal/restconf` (routing, media types, HTTP stat
 - The `ietf-restconf` error document (JSON) with `error-type`, `error-tag`, `error-path` and `error-message`.
 - `POST /api/simulate/l2-storm`, a simulator-specific endpoint (not part of RFC 8040) that injects a broadcast storm on one L2 port.
 - `POST /api/simulate/sync-loss`, a simulator-specific endpoint (not part of RFC 8040) that loses the PTP clock's synchronization source and drives it into holdover.
+- `POST /api/simulate/radio-failure` and `POST /api/simulate/radio-restore`, simulator-specific endpoints that inject and clear a radio-link failure.
 
 **Not implemented**
 
@@ -271,6 +272,8 @@ A method that is not allowed for the target is answered `405 method-not-allowed`
 | `POST` on a resource that is not a list collection | `GET, HEAD, PUT, PATCH, DELETE` |
 | Wrong method on `/api/simulate/l2-storm` | `POST` |
 | Wrong method on `/api/simulate/sync-loss` | `POST` |
+| Wrong method on `/api/simulate/radio-failure` | `POST` |
+| Wrong method on `/api/simulate/radio-restore` | `POST` |
 
 ### 5.1. GET and HEAD
 
@@ -555,6 +558,8 @@ Routes:
 | `/restconf/streams`, `/restconf/streams/*` | `501 operation-not-supported` |
 | `/api/simulate/l2-storm` | Simulation endpoint (`POST`) |
 | `/api/simulate/sync-loss` | Simulation endpoint (`POST`) |
+| `/api/simulate/radio-failure` | Simulation endpoint (`POST`) |
+| `/api/simulate/radio-restore` | Simulation endpoint (`POST`) |
 
 The server is stateless at the HTTP layer; state resides in the `internal/store` package (running/candidate/startup datastores).
 
@@ -637,6 +642,28 @@ A successful request is `202 Accepted` with a small status object naming the res
 ```
 
 Errors: a malformed body is `400 malformed-message`; an unknown port is `422 invalid-value`; a method other than `POST` is `405` with `Allow: POST`; and without a sync simulator the endpoint is `501 operation-not-supported`.
+
+The radio endpoints drive the radio domain (Phase 6):
+
+```
+POST /api/simulate/radio-failure
+POST /api/simulate/radio-restore
+```
+
+`radio-failure` injects a fade into a radio link, so its link budget, fade margin and alarms reflect a failing link; `radio-restore` clears the fade. Both take the same optional body:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `link` | string | Radio link name, e.g. `radio0` (optional; empty selects the first radio link) |
+| `fade-db` | number | `radio-failure` only: injected fade depth in dB, 0 or absent meaning the domain's failure depth (60 dB) |
+
+A successful request is `202 Accepted` with the resulting link state:
+
+```json
+{"link":"radio0","state":"down","status":"ok"}
+```
+
+`state` is `down`, `degraded` or `up`. Errors: a malformed body is `400 malformed-message`; a negative `fade-db` is `400 invalid-value`; an unknown link is `422 invalid-value`; a method other than `POST` is `405` with `Allow: POST`; and without a radio simulator the endpoint is `501 operation-not-supported`. The full effect — an alarm, a PTP holdover, a trap and a metric — is walked through in [../demo.md](../demo.md).
 
 ---
 

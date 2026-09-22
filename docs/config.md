@@ -13,7 +13,8 @@ make run CONFIG=configs/local.yaml     # configs/local*.yaml is gitignored
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `snmp.port` | int | `1161` | SNMP v2c agent port (community is fixed to `public`) |
-| `snmp.trap-port` | int | `1162` | destination port for traps (traps only, no informs) |
+| `snmp.trap-host` | string | `127.0.0.1` | trap receiver address |
+| `snmp.trap-port` | int | `1162` | trap receiver port (traps only, no informs) |
 | `netconf.port` | int | `1830` | SSH subsystem `netconf`; any login/password is accepted |
 | `restconf.port` | int | `8080` | RESTCONF HTTP port; no authentication |
 | `metrics.port` | int | `9090` | Prometheus `/metrics` endpoint |
@@ -32,6 +33,7 @@ IANA `830`, and SNMP uses `1161` instead of `161`.
 ```yaml
 snmp:
   port: 1161
+  trap-host: 127.0.0.1
   trap-port: 1162
 netconf:
   port: 1830
@@ -59,7 +61,7 @@ startup:
 - two enabled planes share a port. The always-on planes are SNMP, SNMP traps, NETCONF, RESTCONF
   and metrics; `gnmi.port` is checked only when `gnmi.enabled` is true;
 - `log.level` is not one of `debug`, `info`, `warn`, `error`;
-- `startup.file` is empty.
+- `snmp.trap-host` or `startup.file` is empty.
 
 `Validate` never modifies its receiver, and `Load` wraps a validation failure with the file path
 so the cause is visible in the startup log. A missing or unreadable file, and an empty `--config`

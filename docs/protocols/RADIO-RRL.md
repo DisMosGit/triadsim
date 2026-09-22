@@ -539,6 +539,11 @@ Alarms are cleared when the alarm condition is no longer present for the clear p
 | `simRadioModulation` | `1.3.6.1.4.1.99999.1.1.7` | Integer | read-only |
 | `simRadioLinkState` | `1.3.6.1.4.1.99999.1.1.8` | Integer | read-only |
 
+All of the objects above are registered in `internal/router/oid.go` (Phase 1.8 and 6.2). Floats are
+carried as RFC 5342 `OpaqueDouble`; `simRadioLinkState` reports `up(1)`, `degraded(2)` or `down(3)`.
+The objects are scalars (`.0`) because the MVP has one radio link, and they are built from the first
+interface whose type is `radio`.
+
 ### 9.2. RESTCONF Paths
 
 | Resource | Path |
@@ -690,7 +695,94 @@ TriadSim exposes the following Prometheus metrics for the radio link:
 
 ---
 
-## 12. References
+## 12. Simulator implementation (Phase 6)
+
+`internal/radio` implements the parts of this reference the simulator needs. It is a **state
+model**, never a waveform: no RF is generated, no modulated signal is decoded, and no frame is
+encoded on the wire.
+
+### 12.1. Link budget
+
+`internal/radio/linkbudget.go` computes, once per tick per radio link:
+
+```
+L_FS = 92.45 + 20*log10(f_GHz) + 20*log10(d_km)
+RSL  = P_TX + G_TX + G_RX − L_FS − feed-loss − 0.5 − 0.5
+RSSI = clamp(RSL − injected-fade, −99, −20)            [dBm]
+```
+
+`P_TX` is `atpc/current-power` while ATPC is enabled and `tx-power` otherwise. Atmospheric and
+miscellaneous losses are fixed constants, and the derived values are clamped to the model's ranges
+so a domain state write can never make a later management-plane commit fail. The results are
+written to the read-only leaves `rssi`, `fade-margin`, `capacity`, `link-budget/calculated-rsl`,
+`atpc/current-power`, `acm/current-profile` and `acm/current-capacity`.
+
+### 12.2. ATPC
+
+`atpcStep` walks the transmit power towards `atpc/target-rsl` by at most 1 dB per tick and clamps
+the result to `min-power..max-power`. The loop is open: the far end is not simulated, so the
+transmitter reacts to its own received level.
+
+### 12.3. ACM
+
+With `acm/mode` `adaptive`, the highest profile of the `min-profile..max-profile` window whose
+`rsl-threshold` the level still meets is selected — the highest capacity the link can carry. A
+level below every threshold degrades to the most robust profile of the window. `fixed` mode and a
+disabled ACM keep the configured `acm/current-profile`, and an empty profile table leaves the
+derived leaves untouched.
+
+### 12.4. Link state and alarms
+
+`internal/radio/alarms.go` maintains one state per link — `link-state` = `up`, `degraded` or `down`,
+exposed as `1.3.6.1.4.1.99999.1.1.8` (`simRadioLinkState`) — with raise and clear thresholds so a
+level on a threshold does not flap:
+
+| Alarm | Raised when | Cleared when | Severity |
+|---|---|---|---|
+| `radioLinkDown` | `rssi < −85 dBm` | `rssi ≥ −82 dBm` | critical |
+| `radioLinkDegraded` | fade margin `< 6 dB` | fade margin `≥ 8 dB` | major |
+
+A link that is down reports only `radioLinkDown`: entering it clears a raised `radioLinkDegraded`,
+and recovering from it clears `radioLinkDown` before raising anything else. Each change publishes
+`AlarmRaised`/`AlarmCleared` with `Domain: "radio"`, `Resource` = the link name and
+`Alarm: "radioLinkDown"` or `"radioLinkDegraded"`.
+
+### 12.5. Simulation API
+
+```bash
+# Fail the link: a 60 dB fade by default.
+curl -X POST http://localhost:8080/api/simulate/radio-failure -d '{"link":"radio0"}'
+# ... or a partial fade that lands in the degraded band.
+curl -X POST http://localhost:8080/api/simulate/radio-failure -d '{"link":"radio0","fade-db":30}'
+# Restore it.
+curl -X POST http://localhost:8080/api/simulate/radio-restore -d '{"link":"radio0"}'
+```
+
+`POST /api/simulate/radio-failure` takes an optional `fade-db` (0 and an absent field mean the
+domain's failure depth, 60 dB) and an optional `link` (empty selects the first radio link); the
+response carries the resulting `link-state`. `POST /api/simulate/radio-restore` clears the injected
+fade. `simulator alarm inject` is a thin client over the same endpoints.
+
+### 12.6. Simplifications
+
+- **No RF and no far end.** RSSI is a budget calculation, not a measurement; ATPC reacts to the
+  local level and there is no RTPC, XPIC, FEC, AIS, LOF or BER model.
+- **One radio link.** The vendor objects are scalars (`.0`) and are built from the first interface
+  whose type is `radio`.
+- **Alarms are two.** `radioLinkDown` and `radioLinkDegraded` (§8.3); the other rows of the alarm
+  table are not simulated, and the fade, LOS persistence, BER and available-ITU-R-P.530 models are
+  not implemented.
+- **Traps are three, not eight.** `simRadioLinkDown` (`.0.1`), `simRadioLinkUp` (`.0.2`) and
+  `simSyncHoldover`/`simSyncRestored` are documented in
+  [SNMP.md](SNMP.md#62-triadsim-trap-oids); `radioLinkDegraded` raises a notification and a metric
+  but has no trap OID.
+- **The metric set is smaller than §11.** Only `simulator_alarms_total{type="radio",severity}`
+  counts radio alarms; the per-object gauges of §11 are not implemented. See
+  [../metrics.md](../metrics.md).
+
+---
+
+## 13. References
 
 | Document | Title |
 |---|---|

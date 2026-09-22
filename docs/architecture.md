@@ -43,7 +43,7 @@ synchronization — behind one managed-object model and one management plane.
 | Package | Responsibility | Phase 0 state |
 |---|---|---|
 | `cmd/simulator` | Binary entry point | delegates to `internal/cli` |
-| `internal/cli` | cobra commands; today only `start` | implemented |
+| `internal/cli` | cobra commands: `start`, `alarm inject`, `dump`, `config validate`, `version` | implemented (Phase 0; commands Phase 6) |
 | `internal/config` | YAML configuration, defaults, `Load`, `Validate` | implemented |
 | `internal/log` | `log/slog` JSON logging on stderr | implemented |
 | `internal/event` | typed events and the channel-based bus | implemented |
@@ -52,15 +52,15 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/model` | managed-object structs with `path`/`xml`/`json` tags | radio, L2, sync, device (Phases 1.1-1.4) |
 | `internal/router` | path ↔ model, OID ↔ path, RPC dispatch, commit validation, schema tree for protocol codecs, snapshot hydration, module mapping, MIB tables | implemented (Phase 1.6; schema Phase 2; dynamic lists, `Snapshot` and L2 MIBs Phase 4) |
 | `internal/datatree` | data-tree read and edit engine shared by the NETCONF and RESTCONF codecs | implemented (Phase 4) |
-| `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms | Phase 6 |
+| `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms, failure injection | implemented (Phase 6) |
 | `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters, storm simulation | implemented (Phase 4) |
-| `internal/sync` | PTP state machine, SyncE source selection, ESMC/SSM quality levels, holdover, simulated offset/jitter | implemented (Phase 5) |
-| `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) | implemented (Phase 1.8); traps Phase 6 |
+| `internal/sync` | PTP state machine, SyncE source selection, ESMC/SSM quality levels, holdover, simulated offset/jitter | implemented (Phase 5); cross-domain reaction Phase 6 |
+| `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) and the trap sender | implemented (Phase 1.8; traps Phase 6) |
 | `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes, confirmed commit | implemented (Phase 2, confirmed commit Phase 3) |
 | `internal/netconf/notif` | RFC 5277 create-subscription, subscription registry and notification dispatch | implemented (Phase 3) |
 | `internal/restconf` | chi router, URL mapping, codecs, CRUD, error documents | implemented (Phase 4) |
 | `internal/gnmi` | optional gRPC service | Phase 7 |
-| `internal/metrics` | Prometheus collectors and `/metrics` | implemented (Phase 1.9) |
+| `internal/metrics` | Prometheus collectors (`uptime`, SNMP requests, alarms, PTP transitions, config changes) and `/metrics` | implemented (Phase 1.9; counters Phase 6) |
 | `internal/tools` | blank imports pinning the approved dependency stack | build tag `tools` only |
 
 ## Dependency rules
@@ -95,8 +95,9 @@ synchronization — behind one managed-object model and one management plane.
 - `system-info/` — `device-id`, `name`, `description`, `contact`, `location` and the read-only `uptime`;
 - `interfaces/interface[name=<if>]/` — `name`, `type` (`radio` or `ethernet`), `enabled`, `mtu`,
   `mac-address`, the read-only `counters`, and for a radio interface a `radio-link/` subtree with
-  `tx-power`, the read-only `rssi`/`fade-margin`/`capacity`, `link-budget/`, `atpc/`, `acm/` and
-  `modulation-profile/`.
+  `tx-power`, the read-only `rssi`/`fade-margin`/`capacity`/`link-state`, `link-budget/`, `atpc/`,
+  `acm/` and `modulation-profile/`. `link-state` is what the radio domain's alarms report and
+  carries `up`, `degraded` or `down`.
 
 The other domains are standalone managed-object trees: `vlans/vlan[id=<vid>]`,
 `mac-table` (parameters, `entry[mac-address=<mac>]` and the read-only `current-count`) and
@@ -151,16 +152,18 @@ type-driven, so it does not depend on which list instances a datastore holds.
    startup and publishes `ConfigChanged` on the bus. NETCONF `edit-config` validates its proposed
    candidate snapshot the same way before writing anything.
 4. Domains subscribe to the events they care about. `internal/radio` reacting to a simulated
-   failure publishes `AlarmRaised`; `internal/sync` turns that into a PTP `StateTransition`, and
-   the management planes turn both into traps, notifications and metrics. `internal/l2` publishes
-   `StateTransition` for a bridge port and `AlarmRaised`/`AlarmCleared` for a broadcast storm. No
-   domain calls another domain directly. In Phase 5 the PTP transitions are driven explicitly
-   through `sync.Manager.Handle`/`SyncLoss` (the latter from `POST /api/simulate/sync-loss`); the
-   radio → sync subscription arrives in Phase 6.5.
-5. `internal/l2` and `internal/sync` additionally run a periodic loop on the injected clock.
-   L2 ages the MAC table, applies the STP forward delays and refreshes the LLDP neighbour TTLs;
-   sync re-runs the SyncE source selection and refreshes the simulated PTP offset and jitter. Both
-   tick every `5 s` by default and `start` runs the loops for the lifetime of the process.
+   failure publishes `AlarmRaised`; `internal/sync` subscribes to the same bus and turns that alarm
+   into a PTP `StateTransition`, and the management planes turn both into traps, notifications and
+   metrics. `internal/l2` publishes `StateTransition` for a bridge port and
+   `AlarmRaised`/`AlarmCleared` for a broadcast storm. No domain calls another domain directly.
+5. `internal/l2`, `internal/sync` and `internal/radio` additionally run a periodic loop on the
+   injected clock. L2 ages the MAC table, applies the STP forward delays and refreshes the LLDP
+   neighbour TTLs; sync re-runs the SyncE source selection and refreshes the simulated PTP offset
+   and jitter; radio recalculates the link budget, steps ATPC and re-selects the ACM profile. All
+   three tick every `5 s` by default and `start` runs the loops for the lifetime of the process.
+6. `internal/snmp` and `internal/metrics` subscribe to the bus too: the trap sender maps an event to
+   a vendor trap OID and sends it, and the metric collector counts the alarms, the PTP transitions
+   and the configuration changes. Both take their subscription once, for the whole server.
 
 ## Startup
 
@@ -174,11 +177,14 @@ SIGTERM and runs the cobra command tree. `start` then:
    `model.DefaultDevice` and installs `router.Validate` as the commit validator,
 5. loads the persisted startup; when the running datastore is empty it seeds the default device
    into the candidate and commits it, which writes `startup.json`,
-6. builds the L2 and sync domain managers (`internal/l2`, `internal/sync`) around the router and
-   the bus and runs their periodic loops,
-7. listens on the SNMP, NETCONF, RESTCONF and metrics ports, then blocks until the context is
-   cancelled and shuts every plane down. A bind failure is fatal, so a busy port is reported at
-   startup instead of silently degrading the simulator.
+6. builds the L2, sync and radio domain managers (`internal/l2`, `internal/sync`, `internal/radio`)
+   around the router and the bus and runs their periodic loops,
+7. listens on the SNMP, NETCONF, RESTCONF and metrics ports, and starts the trap sender, which
+   consumes its bus subscription until shutdown, and the uptime writer, which keeps
+   `system-info/uptime` in step with the wall clock. It then blocks until the context is cancelled
+   and shuts every plane down. A bind failure is fatal, so a busy port is reported at startup
+   instead of silently degrading the simulator.
 
 See [store.md](store.md), [eventbus.md](eventbus.md) and [config.md](config.md) for the
-contracts behind those steps, and `docs/protocols/` for the per-protocol references.
+contracts behind those steps, and `docs/protocols/` for the per-protocol references. The
+cross-domain scenario that ties the pieces together is walked through in [demo.md](demo.md).

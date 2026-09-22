@@ -8,8 +8,11 @@ Index of the TriadSim documentation. Start with the architecture, then the subsy
 |---|---|
 | [architecture.md](architecture.md) | Modular monolith, package responsibilities, dependency rules, data flow, startup |
 | [store.md](store.md) | running / candidate / startup, the `Store` contract, diff/commit/rollback, persistence |
-| [eventbus.md](eventbus.md) | Event types, publish/subscribe semantics, buffering and drop policy, lifecycle |
+| [eventbus.md](eventbus.md) | Event types, structured fields, publish/subscribe semantics, buffering and drop policy, lifecycle |
 | [config.md](config.md) | YAML reference, defaults, validation rules, `startup.json` |
+| [cli.md](cli.md) | `start`, `alarm inject`, `dump`, `config validate`, `version` and their flags |
+| [metrics.md](metrics.md) | Prometheus metric names, labels and examples |
+| [demo.md](demo.md) | The cross-domain scenario step by step |
 
 ## Protocol references
 
@@ -33,8 +36,8 @@ Index of the TriadSim documentation. Start with the architecture, then the subsy
 ## Planned
 
 Not written yet; they arrive with the phases that produce their content:
-`testing.md` (test strategy), `cli.md` (cobra commands), `metrics.md` (Prometheus metrics),
-`demo.md` (the cross-domain scenario), `glossary.md` (RRL/PTP/QinQ terms), `faq.md`.
+`testing.md` (test strategy), `glossary.md` (RRL/PTP/QinQ terms), `faq.md`, and
+`protocols/gNMI.md` (Phase 7).
 
 Higher-level project documents live in the repository root: [README.md](../README.md),
 [ROADMAP.md](../ROADMAP.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md).

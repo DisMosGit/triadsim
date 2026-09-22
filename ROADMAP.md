@@ -652,61 +652,111 @@
 > **Результат фазы:** одна `curl` команда порождает trap + notification + метрику + переход state machine.
 
 ### 6.1. API симуляции
-- [ ] `internal/restconf/sim/` — `POST /api/simulate/radio-failure` · `M` 🧪
+- [x] `POST /api/simulate/radio-failure` · `M` 🧪 (в `internal/restconf/server.go`, см. отклонения)
 - [x] `POST /api/simulate/sync-loss` · `S` 🧪 (сделан в Phase 5, `internal/restconf/server.go`)
 - [x] `POST /api/simulate/l2-storm` · `S` 🧪 (сделан в 4.10, `internal/restconf/server.go`)
-- [ ] Коммит: `feat(restconf): simulation API` · `M` 🧪
+- [x] `POST /api/simulate/radio-restore` · `S` 🧪 (нужен для возврата линка в 6.5)
+- [x] Коммит: `feat(restconf): simulation api for a radio failure` · `M` 🧪
 
 ### 6.2. Radio: link budget и аварии
-- [ ] `internal/radio/linkbudget.go` — расчёт RSSI, fade margin, capacity · `M` 🧪
-- [ ] `internal/radio/alarms.go` — `radioLinkDown`, `radioLinkDegraded` · `M` 🧪
-- [ ] `internal/radio/atpc.go` — шаг ATPC (шаг 1 дБ, границы min/max) · `M` 🧪
-- [ ] `internal/radio/acm.go` — выбор профиля модуляции по SNR · `M` 🧪
-- [ ] Публикация `AlarmRaised`/`AlarmCleared` в EventBus · `S` 🧪
-- [ ] Коммит: `feat(radio): link budget + alarms + atpc + acm` · `L` 🧪
+- [x] `internal/radio/linkbudget.go` — расчёт RSSI, fade margin, capacity · `M` 🧪
+- [x] `internal/radio/alarms.go` — `radioLinkDown`, `radioLinkDegraded` · `M` 🧪
+- [x] `internal/radio/atpc.go` — шаг ATPC (шаг 1 дБ, границы min/max) · `M` 🧪
+- [x] `internal/radio/acm.go` — выбор профиля модуляции по SNR · `M` 🧪
+- [x] Публикация `AlarmRaised`/`AlarmCleared` в EventBus · `S` 🧪
+- [x] Коммит: `feat(radio): link budget, atpc, acm, alarms and failure injection` · `L` 🧪
 
 ### 6.3. SNMP traps
-- [ ] `internal/snmp/trap.go` — отправка trap на `:1162` · `M` 🧪
-- [ ] Vendor OID traps: `1.3.6.1.4.1.99999.0.1 radioLinkDown`, `.0.2 radioLinkUp` · `S`
-- [ ] Varbinds с именем линка, RSSI, fade margin · `S` 🧪
-- [ ] Подписка на EventBus `AlarmRaised`/`AlarmCleared` · `M` 🧪
-- [ ] Коммит: `feat(snmp): traps` · `M` 🧪
+- [x] `internal/snmp/trap.go` — отправка trap на `:1162` · `M` 🧪
+- [x] Vendor OID traps: `1.3.6.1.4.1.99999.0.1 radioLinkDown`, `.0.2 radioLinkUp` · `S`
+- [x] Varbinds с именем линка, RSSI, fade margin · `S` 🧪
+- [x] Подписка на EventBus `AlarmRaised`/`AlarmCleared` · `M` 🧪
+- [x] Коммит: `feat(snmp): traps on the event bus` · `M` 🧪
 
 ### 6.4. Prometheus метрики аварий
-- [ ] `simulator_alarms_total{type,severity}` · `S` 🧪
-- [ ] `simulator_ptp_state_transitions_total{from,to}` · `S` 🧪
-- [ ] `simulator_config_changes_total` · `S` 🧪
-- [ ] Коммит: `feat(metrics): alarm + state counters` · `M` 🧪
+- [x] `simulator_alarms_total{type,severity}` · `S` 🧪
+- [x] `simulator_ptp_state_transitions_total{from,to}` · `S` 🧪
+- [x] `simulator_config_changes_total` · `S` 🧪
+- [x] Коммит: `feat(metrics): alarm, ptp transition and config counters` · `M` 🧪
 
 ### 6.5. Кросс-доменная связка radio → sync
-- [ ] При `radioLinkDown` → PTP уходит в `holdover` · `M` 🧪
-- [ ] При восстановлении линка → PTP возвращается в `master` · `M` 🧪
-- [ ] Интеграционный тест полного сценария §3.6 · `L` 🧪
-- [ ] Коммит: `feat(sync): cross-domain holdover on radio failure` · `L` 🧪
+- [x] При `radioLinkDown` → PTP уходит в `holdover` · `M` 🧪
+- [x] При восстановлении линка → PTP возвращается в `locked` · `M` 🧪
+- [x] Интеграционный тест полного сценария §3.6 · `L` 🧪
+- [x] Коммит: `feat(sync): cross-domain holdover on a radio failure` · `L` 🧪
 
 ### 6.6. CLI (cobra)
-- [ ] `internal/cli/root.go` — корневая команда · `S` 🧪
-- [ ] `start` — запуск симулятора · `S` 🧪
-- [ ] `alarm inject --type radioLinkDown --link radio0` · `M` 🧪
-- [ ] `dump --format json` · `M` 🧪
-- [ ] `config validate --file configs/default.yaml` · `S` 🧪
-- [ ] `version` · `S` 🧪
-- [ ] Коммит: `feat(cli): cobra commands` · `L` 🧪
+- [x] `internal/cli/root.go` — корневая команда · `S` 🧪
+- [x] `start` — запуск симулятора · `S` 🧪 (сделан в Phase 0)
+- [x] `alarm inject --type radioLinkDown --link radio0` · `M` 🧪
+- [x] `dump --format json` · `M` 🧪
+- [x] `config validate --file configs/default.yaml` · `S` 🧪
+- [x] `version` · `S` 🧪
+- [x] Коммит: `feat(cli): alarm inject, dump, config validate and version` · `L` 🧪
 
 ### 6.7. Integration-тесты с testcontainers
-- [ ] `test/integration/netconf_test.go` — round-trip NETCONF · `L` 🔌 🧪
-- [ ] `test/integration/snmp_test.go` — walk + trap receiver · `L` 🔌 🧪
-- [ ] `test/integration/crossdomain_test.go` — §3.6 · `L` 🔌 🧪
-- [ ] Коммит: `test(integration): netconf + snmp + crossdomain` · `L` 🧪
+- [x] `test/integration/netconf_test.go` — round-trip NETCONF · `L` 🔌 🧪
+- [x] `test/integration/snmp_test.go` — walk + trap receiver · `L` 🔌 🧪
+- [x] `test/integration/crossdomain_test.go` — §3.6 · `L` 🔌 🧪
+- [x] Коммит: `test(integration): netconf, snmp and crossdomain in a container` · `L` 🧪
 
 ### 6.8. Документация аварий
-- [ ] `docs/protocols/RADIO-RRL.md` — link budget, RSSI, ATPC, ACM, профили модуляции, fade margin, alarms · `L` 📝
-- [ ] `docs/demo.md` — главный кросс-доменный сценарий §3.6 пошагово · `M` 📝
-- [ ] `docs/metrics.md` — Prometheus-метрики · `S` 📝
-- [ ] `docs/cli.md` — команды cobra · `M` 📝
-- [ ] Коммит: `docs: radio, demo, metrics, cli` · `L` 📝
+- [x] `docs/protocols/RADIO-RRL.md` — link budget, RSSI, ATPC, ACM, профили модуляции, fade margin, alarms · `L` 📝 (§12 — реализация)
+- [x] `docs/demo.md` — главный кросс-доменный сценарий §3.6 пошагово · `M` 📝
+- [x] `docs/metrics.md` — Prometheus-метрики · `S` 📝
+- [x] `docs/cli.md` — команды cobra · `M` 📝
+- [x] Коммит: `docs: radio, demo, metrics, cli` · `L` 📝
 
 **✅ Phase 6 завершена, когда:** главный кросс-доменный сценарий проходит end-to-end; `/metrics` отдаёт `simulator_alarms_total`.
+
+> **Отклонения при реализации Phase 6:**
+> - **Нет пакета `internal/restconf/sim/`.** Оба радио-эндпоинта живут в `internal/restconf/server.go`
+>   рядом с `l2-storm` и `sync-loss` — один и тот же `Server` и один и тот же разбор тела запроса
+>   (`decodeJSON`), а отдельный пакет дробил бы обработчики по двум местам.
+> - **`POST /api/simulate/radio-restore` добавлен к эскизу 6.1.** Без него сценарий 6.5 нельзя
+>   замкнуть: линк должен восстановиться, чтобы PTP вернулся в `locked` и пришёл trap `.0.2`.
+> - **Модель получила лист `radio-link/link-state`** (`config:"false"`, `up`/`degraded`/`down`),
+>   чтобы отложенный в Phase 1 vendor-объект `simRadioLinkState` (`…99999.1.1.8`) получил поле;
+>   это ровно то, что отклонение Phase 1 обещало сделать в 6.2.
+> - **Пороговые значения аварий — константы пакета** (`rssi` −85/−82 dBm, fade margin 6/8 dB,
+>   шаг ATPC 1 дБ, failure fade 60 дБ), а не поля YAML: `configs/default.yaml` не менялся, кроме
+>   нового `snmp.trap-host` (по умолчанию `127.0.0.1`), который понадобился интеграционным тестам
+>   и полезен для реального приёмника trap'ов.
+> - **У линка одно состояние, а не независимые аварии.** `input`/`output`-флагов нет: связь
+>   `up`/`degraded`/`down` пишется в `link-state`, переход сам публикует `AlarmRaised`/
+>   `AlarmCleared`. Вход в `down` сначала снимает `radioLinkDegraded`, выход — снимает
+>   `radioLinkDown`. Все записанные значения зажимаются в диапазоны модели, чтобы последующий
+>   commit не падал.
+> - **Кросс-доменная реакция sync подписана в `New`, а не в `Run`.** Приведён к прецеденту
+>   `netconf/notif`: подписка покрывает окно от конструирования до shutdown, поэтому авария,
+>   случившаяся до старта цикла, не теряется. То же сделано для trap-сендера.
+> - **`simulator_alarms_total` помечен семейством, а не именем аварии.** `Event.Domain` даёт
+>   `type` = `radio`/`l2`/`sync`, `severity` — уровень (`critical`/`major`/`cleared`); это
+>   совпадает с §3.6 (`{type="radio"}`), а не с более гранулярным `radioLinkDown`. Счётчик метрики
+>   инкрементируется и на `AlarmCleared` (`severity="cleared"`).
+> - **`Event` расширен структурными полями** (`Domain`, `Alarm`, `From`, `To`) — иначе trap-сендер
+>   и метрики разбирали бы текст `Message`. NETCONF-нотификация отдаёт их как опциональные
+>   `<alarm>`/`<from>`/`<to>`; голдены NETCONF не изменились, так как в них этих событий нет.
+> - **Trap-сендер шлёт один трап на одно событие** fire-and-forget через собственный UDP-сокет
+>   (`MarshalMsg` + `Write`), а не `gosnmp.Connect`/`SendTrap`: так же оформлена серверная часть
+>   агента, и не нужен второй `GoSNMP`. Из шести vendor-трапов используются
+>   `.0.1`–`.0.6`; `radioLinkDegraded` и clear шторма дают notification и метрику, но не trap
+>   (OID для них не определён). Трап `simSyncHoldover`/`simSyncRestored` выводится из
+>   `StateTransition` sync-домена, а не из alarm-события.
+> - **`system-info/uptime` обновляется раз в секунду** горутиной в `start`: до Phase 6 его никто
+>   не писал, и `sysUpTime.0` всегда был нулевым. Trap-сендер считает `sysUpTime` от собственного
+>   старта, чтобы не зависеть от гонки с этим писателем.
+> - **`internal/cli` вырос до команд, которые ходят в RESTCONF.** `alarm inject` и `dump`
+>   работают только против запущенного симулятора (состояние in-memory), `--addr` по умолчанию
+>   `http://127.0.0.1:8080`; `config validate` и `version` — автономные.
+> - **Интеграционные тесты поднимают симулятор в контейнере, а не собирают Dockerfile.** Собирается
+>   статический бинарник (`CGO_ENABLED=0 go build`), монтируется в `alpine:3.20` вместе с
+>   конфигом, порты публикуются; trap-приёмник теста слушает `0.0.0.0` и доступен контейнеру через
+>   `host.testcontainers.internal:host-gateway`. Это не требует ни Dockerfile, ни pull'а
+>   net-snmp/netopeer2-образов.
+> - **`scripts/demo.sh` и `scripts/check.sh` не тронуты** — по роадмапу они относятся к 7.4;
+>   `demo.sh` остаётся заглушкой до Phase 7.
+
 
 ---
 

@@ -30,7 +30,7 @@ lint:
 run:
 	$(GO) run ./cmd/simulator start --config $(CONFIG)
 
-# demo reproduces the cross-domain scenario; until Phase 6 it reports that it is not implemented.
+# demo reproduces the cross-domain scenario; the script is completed in Phase 7.
 demo:
 	./scripts/demo.sh
 

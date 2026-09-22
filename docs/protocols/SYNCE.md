@@ -187,8 +187,9 @@ changes in response to:
   `…/priority`, `…/ssm-enabled`, `synce/enabled`);
 - **Source loss** through `sync.Manager.SyncLoss`, which the RESTCONF
   `/api/simulate/sync-loss` endpoint calls;
-- **PTP state changes** once the cross-domain wiring of Phase 6.5 subscribes to
-  the radio alarms.
+- **PTP state changes** from the radio domain's alarms: the manager's `Run`
+  drains the bus subscription taken in `New`, so `radioLinkDown` drives the clock
+  into holdover and its clear locks it again (Phase 6.5).
 
 The selection order is: the best quality level (QL-PRC, QL-SSU-A, QL-SSU-B,
 QL-SEC), then the lowest configured `priority`, then the interface the PTP
@@ -214,8 +215,7 @@ selection and the PTP clock are read and written consistently:
 - When PTP enters `holdover-in-spec`, the SyncE selection is left untouched (the
   last known quality is maintained).
 - When the holdover expires (`holdover-out-of-spec`), the domain raises the PTP
-  holdover alarm; a SyncE QL degradation on top of it is planned for the
-  cross-domain work of Phase 6.
+  holdover alarm; the SyncE side is not alarmed separately.
 - A restored source locks the clock again and clears the alarm.
 
 ### 5.6. ESMC/SSM Mapping
@@ -305,24 +305,28 @@ read-only and answers `403 access-denied`.
 
 ### 6.4. CLI
 
-The cobra commands (`dump --synce`, `synce ql set`) arrive in Phase 6.6. Until
-then SyncE is driven through RESTCONF or NETCONF.
+There are no SyncE-specific commands: SyncE is driven through RESTCONF or
+NETCONF, and `simulator dump --content config` prints the configured subtree
+(`--format json`).
 
 ---
 
 ## 7. Metrics
 
-The Prometheus metrics below are **planned for Phase 6.4** and are not exposed
-yet. In Phase 5 a QL change is visible through the `synce/selected-*` state
-leaves and, indirectly, through the PTP state transitions on the EventBus.
+The SyncE gauges below are **not exposed**; a QL change is visible through the
+`synce/selected-*` state leaves, and indirectly through the PTP state
+transitions on the EventBus. Phase 6.4 exposes only the counters the bus can
+feed (`simulator_alarms_total{type="sync"}`,
+`simulator_ptp_state_transitions_total{from,to}`); see
+[../metrics.md](../metrics.md).
 
 | Metric | Type | Description |
 |---|---|---|
-| `simulator_synce_ql` | Gauge | Current SyncE QL (integer SSM code) |
-| `simulator_synce_extended_ql` | Gauge | Current extended QL (eSSM code) |
-| `simulator_synce_ql_changes_total` | Counter | Total number of QL changes |
-| `simulator_synce_interface_up` | Gauge | Per-interface SyncE operational state (1=up, 0=down) |
-| `simulator_synce_ptp_preference` | Gauge | Whether the interface is preferred for PTP receiver (1=yes, 0=no) |
+| `simulator_synce_ql` | Gauge | Current SyncE QL (integer SSM code) — not implemented |
+| `simulator_synce_extended_ql` | Gauge | Current extended QL (eSSM code) — not implemented |
+| `simulator_synce_ql_changes_total` | Counter | Total number of QL changes — not implemented |
+| `simulator_synce_interface_up` | Gauge | Per-interface SyncE operational state — not implemented |
+| `simulator_synce_ptp_preference` | Gauge | Whether the interface is preferred for the PTP receiver — not implemented |
 
 ---
 
@@ -338,7 +342,7 @@ TriadSim intentionally simplifies SyncE to focus on management plane testing:
 | **Slow protocol (OSSP) framing** | Not implemented |
 | **QL-enabled selection algorithm** | Simplified; quality level, priority and PTP preference are configurable and the selection is deterministic |
 | **Extended SSM TLV** | Modeled as a separate string leaf; not encoded in ESMC |
-| **SyncE-to-PTP QL propagation** | Both parts share one `sync.Manager`; the cross-domain linkage to radio alarms arrives in Phase 6 |
+| **SyncE-to-PTP QL propagation** | Both parts share one `sync.Manager`; the radio → PTP reaction is implemented (Phase 6.5), while QL does not propagate into the clock state |
 | **Multi-domain synchronization** | Single domain per interface; no cross-domain QL leakage modeling |
 
 These simplifications allow the simulator to be lightweight and focused on integration testing with external management systems that monitor and control synchronization state.

@@ -281,7 +281,10 @@ TriadSim simulates SyncE by:
 - Writing the selected source and its QL to the read-only state leaves, so they
   are visible over RESTCONF and SNMP.
 - Allowing manual source loss for testing (`POST /api/simulate/sync-loss`); a
-  manual QL injection endpoint is planned for Phase 6.
+  manual QL injection endpoint is not implemented.
+- Reacting to the radio domain's `radioLinkDown`/clear alarms: the manager drains
+  its bus subscription in `Run`, so a failed radio link drives the clock into
+  holdover and a restored one locks it again (Phase 6.5).
 
 ---
 
@@ -353,9 +356,14 @@ payload is the generic `Event` (`type`, `resource`, `severity`, `message`,
 
 | Event Type | Resource | Severity | Consumers |
 |---|---|---|---|
-| `StateTransition` | `ptp/clock` | (empty) | NETCONF notification dispatcher, RESTCONF/SSE, Prometheus (Phase 6) |
-| `AlarmRaised` | `ptp/clock` | `major` | SNMP trap sender (Phase 6), notification dispatcher, Prometheus (Phase 6) |
+| `StateTransition` | `ptp/clock` | (empty) | SNMP trap sender (`simSyncHoldover`/`simSyncRestored`), NETCONF notification dispatcher, Prometheus |
+| `AlarmRaised` | `ptp/clock` | `major` | NETCONF notification dispatcher, Prometheus |
 | `AlarmCleared` | `ptp/clock` | `cleared` | Same as `AlarmRaised` |
+
+The events carry the structured fields of `internal/event`: `Domain` = `sync`,
+`From`/`To` for a transition and `Alarm` for the holdover alarm. The sync trap is
+derived from the transition, so entering `holdover-*` sends `simSyncHoldover` and
+returning to `locked` sends `simSyncRestored`.
 
 `AlarmRaised` is published when the holdover expires (the clock leaves
 `holdover-in-spec` for `holdover-out-of-spec`); `AlarmCleared` is published when
@@ -453,17 +461,20 @@ The cobra commands (`dump`, `alarm inject`, `sync holdover`) arrive in Phase
 
 ## 10. Metrics
 
-The Prometheus counters and gauges below are **planned for Phase 6.4** and are
-not exposed yet; Phase 5 publishes the state transitions and holdover alarm on
-the EventBus instead.
+The Prometheus gauges below are **not exposed**; they are the target of the
+reference, not the implementation. Phase 6.4 exposes only the counters that the
+EventBus can feed:
 
-| Metric | Type | Description |
+| Metric | Type | Exposed |
 |---|---|---|
-| `simulator_ptp_state` | Gauge | Current clock state (1=freerun, 2=acquiring, 3=locked, 4=holdover-in-spec, 5=holdover-out-of-spec) |
-| `simulator_ptp_offset_ns` | Gauge | Current PTP offset in nanoseconds |
-| `simulator_ptp_transitions_total` | Counter | Total number of state transitions |
-| `simulator_ptp_holdover_seconds` | Gauge | Time spent in holdover |
-| `simulator_synce_ql` | Gauge | Current SyncE quality level (integer mapping) |
+| `simulator_ptp_state_transitions_total{from,to}` | Counter | yes — one increment per PTP transition |
+| `simulator_alarms_total{type="sync",severity}` | Counter | yes — the holdover alarm and its clear |
+| `simulator_ptp_state` | Gauge | no — read the clock state over RESTCONF or SNMP instead |
+| `simulator_ptp_offset_ns` | Gauge | no |
+| `simulator_ptp_holdover_seconds` | Gauge | no |
+| `simulator_synce_ql` | Gauge | no — the selected QL is a model leaf and an SNMP object |
+
+See [../metrics.md](../metrics.md) for the implemented set.
 
 ---
 

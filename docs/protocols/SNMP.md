@@ -111,11 +111,11 @@ The radio objects below are **implemented in Phase 1.8**. They are scalar object
 | `1.3.6.1.4.1.99999.1.1.5.0` | `simRadioAtpcEnabled` | Integer TruthValue | read-write | ATPC enabled (1) or disabled (2) |
 | `1.3.6.1.4.1.99999.1.1.6.0` | `simRadioAcmProfile` | Integer | read-only | Active ACM profile index (1-12) |
 | `1.3.6.1.4.1.99999.1.1.7.0` | `simRadioAcmCapacity` | Gauge32 | read-only | Capacity of the active profile in Mbps |
-| `1.3.6.1.4.1.99999.1.1.8.0` | `simRadioAlarmStatus` | Integer | read-only | Radio alarm status — **Phase 6.2**, no model leaf yet |
+| `1.3.6.1.4.1.99999.1.1.8.0` | `simRadioLinkState` | Integer | read-only | Radio link state: `up(1)`, `degraded(2)`, `down(3)` — Phase 6.2 |
 
 Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats.
 
-The synchronization objects below are **implemented in Phase 5**. The clock is a single object (scalars end in `.0`); the SyncE interface table is indexed by the interface index (radio0=1, eth0=2, eth1=3). The remaining vendor objects (`simRadioAlarmStatus`, `simL2VlanCount`) arrive in Phase 6 and are not registered yet; the L2 state itself is exposed through the standard MIBs above rather than a vendor subtree.
+The synchronization objects below are **implemented in Phase 5**. The clock is a single object (scalars end in `.0`); the SyncE interface table is indexed by the interface index (radio0=1, eth0=2, eth1=3). `simRadioLinkState` (`.1.1.8`) completes the radio subtree in Phase 6.2; there is no other vendor object, and the L2 state is exposed through the standard MIBs above rather than a vendor subtree.
 
 | OID | Object | Type | Access | Description |
 |---|---|---|---|---|
@@ -195,7 +195,7 @@ The following textual conventions from RFC 2579 are used by TriadSim MIB objects
 | `dot1dTpFdbPort` | `1.3.6.1.2.1.17.4.3.1.2` | INTEGER | read-only | Phase 4.11 (bridge port number) |
 | `dot1dTpFdbStatus` | `1.3.6.1.2.1.17.4.3.1.3` | INTEGER | read-only | Phase 4.11 (`dynamic` → `learned(3)`, `static` → `mgmt(5)`) |
 | `dot1qVlanStaticName` | `1.3.6.1.2.1.17.7.1.4.3.1.1` | DisplayString | read-only | Phase 4.11 (index is the VLAN id) |
-| `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 |
+| `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 (implemented) |
 
 Scalar objects are addressed with the `.0` instance (`sysDescr.0`); interface columns append the
 1-based interface index (`ifDescr.1`). The bridge tables use their own indexes:
@@ -270,8 +270,9 @@ configuration, validates it with the router and only then applies the writes. A 
 
 ## 6. Traps
 
-> **Not implemented yet.** The Phase 1.8 agent answers requests only; the trap sender and the
-> event wiring land in Phase 6.3. This section describes the target behaviour.
+> **Implemented in Phase 6.3.** `internal/snmp/trap.go` subscribes to the EventBus, maps an event
+> to a trap OID, builds the PDU and sends it to the configured destination. Delivery is
+> fire-and-forget, as the unconfirmed nature of an SNMPv2 trap implies.
 
 ### 6.1. Trap PDU Format
 
@@ -291,16 +292,17 @@ The first two varbinds are mandatory for all SNMPv2-Trap-PDUs .
 
 | Trap OID | Name | Severity | Trigger |
 |---|---|---|---|
-| `1.3.6.1.4.1.99999.0.1` | `simRadioLinkDown` | Major | Radio link failure or fade margin below threshold |
-| `1.3.6.1.4.1.99999.0.2` | `simRadioLinkUp` | Info | Radio link restored |
-| `1.3.6.1.4.1.99999.0.3` | `simSyncHoldover` | Major | PTP transitioned to holdover state |
-| `1.3.6.1.4.1.99999.0.4` | `simSyncRestored` | Info | PTP source restored, transitioned to master |
-| `1.3.6.1.4.1.99999.0.5` | `simL2StormDetected` | Warning | Broadcast storm threshold exceeded |
-| `1.3.6.1.4.1.99999.0.6` | `simConfigChanged` | Info | Running configuration modified |
+| `1.3.6.1.4.1.99999.0.1` | `simRadioLinkDown` | Major | `AlarmRaised` with `Alarm=radioLinkDown` — a failed radio link |
+| `1.3.6.1.4.1.99999.0.2` | `simRadioLinkUp` | Info | `AlarmCleared` with `Alarm=radioLinkDown` — the link recovered |
+| `1.3.6.1.4.1.99999.0.3` | `simSyncHoldover` | Major | `StateTransition` into `holdover-in-spec` or `holdover-out-of-spec` |
+| `1.3.6.1.4.1.99999.0.4` | `simSyncRestored` | Info | `StateTransition` from a holdover state back to `locked` |
+| `1.3.6.1.4.1.99999.0.5` | `simL2StormDetected` | Warning | `AlarmRaised` with `Alarm=l2Storm` — broadcast storm above the threshold |
+| `1.3.6.1.4.1.99999.0.6` | `simConfigChanged` | Info | `ConfigChanged` — a commit changed the running configuration |
 
-Trap sending is **not implemented yet**: it arrives with Phase 6.3. Phase 5 publishes the PTP
-`StateTransition` and the holdover `AlarmRaised`/`AlarmCleared` events on the EventBus, which the
-trap sender will consume.
+`internal/snmp/trap.go` derives the trap from the structured event fields, so no message text is
+parsed: an alarm keeps its name across the raised and the cleared event and the event type selects
+the trap. `radioLinkDegraded` and a cleared storm raise a notification and a metric but have no trap
+OID. An event that maps to no trap is dropped with a debug log.
 
 ### 6.3. Trap Example
 
@@ -330,16 +332,17 @@ SNMPv2-Trap-PDU:
 
 ### 6.4. Trap Delivery
 
-Traps are sent to a single destination taken from the YAML config file: the agent port and the
-trap destination port. The MVP has no receiver list and no per-receiver community.
+Traps are sent to a single destination taken from the YAML config file: a host and a port. The MVP
+has no receiver list and no per-receiver community.
 
 ```yaml
 snmp:
-  port: 1161        # agent
-  trap-port: 1162   # trap destination port
+  port: 1161            # agent
+  trap-host: 127.0.0.1  # trap receiver address
+  trap-port: 1162       # trap receiver port
 ```
 
-Traps go to `127.0.0.1:<snmp.trap-port>`. Trap delivery is fire-and-forget. If the destination is unreachable, the trap is silently dropped; no retransmission is attempted. This is consistent with the unconfirmed nature of SNMPv2-Trap-PDUs .
+Traps go to `snmp.trap-host:snmp.trap-port` and carry community `public`. Trap delivery is fire-and-forget. If the destination is unreachable, the trap is silently dropped; no retransmission is attempted. This is consistent with the unconfirmed nature of SNMPv2-Trap-PDUs .
 
 ---
 
@@ -452,14 +455,13 @@ reply. The MAC forwarding database (`1.3.6.1.2.1.17.4.3.1.2`) is registered in P
 
 ### 9.3. Receiving Traps
 
-> **Phase 6.3.** The trap sender is not implemented in Phase 1.8; the commands below are the
-> target workflow.
+Receiving traps needs a receiver on the configured destination — the default is `127.0.0.1:1162`:
 
 ```bash
 snmptrapd -f -Lo -p 1162
 ```
 
-The `-f` flag keeps the daemon in the foreground, `-Lo` logs to stdout, and `-p 1162` binds to the TriadSim trap port.
+The `-f` flag keeps the daemon in the foreground, `-Lo` logs to stdout, and `-p 1162` binds to the TriadSim trap port. `docs/demo.md` walks through the full scenario.
 
 ### 9.4. Triggering Traps
 
