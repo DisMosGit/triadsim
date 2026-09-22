@@ -87,8 +87,53 @@ func DefaultDevice() *Device {
 				Permanent: true,
 			}},
 		},
-		STP:  defaultSTPState(),
-		LLDP: defaultLLDPConfig(),
+		STP:   defaultSTPState(),
+		LLDP:  defaultLLDPConfig(),
+		PTP:   defaultPTPClock(),
+		SyncE: defaultSyncEState(),
+	}
+}
+
+// defaultPTPClock is the seeded clock: a PTP telecom grandmaster on the
+// G.8275.1 domain 24, locked to its own reference. Only the read-only state
+// leaves change at runtime.
+func defaultPTPClock() PTPClock {
+	return PTPClock{
+		Mode:            PTPModeMaster,
+		Domain:          24,
+		Priority1:       128,
+		Priority2:       128,
+		ClockClass:      6,
+		ClockAccuracy:   0x21,
+		HoldoverTimeout: 300,
+		State:           PTPStateLocked,
+	}
+}
+
+// defaultSyncEState is the seeded SyncE configuration: eth0 is the preferred
+// PRC-traceable source and eth1 an SSU-A fallback. The domain re-runs the
+// selection whenever the configuration changes.
+func defaultSyncEState() SyncEState {
+	return SyncEState{
+		Enabled:        true,
+		SelectedSource: "eth0",
+		SelectedQL:     QLPRC,
+		Interfaces: []SyncEInterface{
+			{
+				Name:          "eth0",
+				SSMEnabled:    true,
+				QL:            QLPRC,
+				Priority:      10,
+				PTPPreference: true,
+			},
+			{
+				Name:       "eth1",
+				SSMEnabled: true,
+				QL:         QLSSUA,
+				Priority:   20,
+			},
+		},
+		ESMC: ESMC{Enabled: true, TxInterval: 1},
 	}
 }
 

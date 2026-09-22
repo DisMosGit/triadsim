@@ -273,6 +273,42 @@ func TestRunServesRestconf(t *testing.T) {
 	assert.Contains(t, body.String(), `"device-id":"sim-001"`)
 }
 
+func TestRunServesSyncLoss(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	start := waitForRecord(t, out, "simulator starting")
+	address, ok := start["restconf_addr"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, address)
+
+	state, err := http.Get("http://" + address + "/restconf/data/sim-sync:ptp/clock/state")
+	require.NoError(t, err)
+	defer func() { _ = state.Body.Close() }()
+	require.Equal(t, http.StatusOK, state.StatusCode)
+	stateBody := new(bytes.Buffer)
+	_, err = stateBody.ReadFrom(state.Body)
+	require.NoError(t, err)
+	assert.Contains(t, stateBody.String(), `"sim-sync:state":"locked"`)
+
+	response, err := http.Post("http://"+address+"/api/simulate/sync-loss",
+		"application/json", strings.NewReader(`{"port":"eth0"}`))
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, http.StatusAccepted, response.StatusCode)
+	lossBody := new(bytes.Buffer)
+	_, err = lossBody.ReadFrom(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, lossBody.String(), `"state":"holdover-in-spec"`)
+}
+
 func TestRunServesNetconfSubsystem(t *testing.T) {
 	isolateDefaultLogger(t)
 	path := writeConfig(t, "log:\n  level: info\n")

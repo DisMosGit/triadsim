@@ -135,7 +135,7 @@ func exception(oid string, typ gosnmp.Asn1BER) gosnmp.SnmpPDU {
 
 // fromPDU converts a request varbind value into a Go value the router can
 // coerce. gosnmp decodes OctetString as []byte and the integer types as int,
-// uint32 or uint64.
+// uint, uint32 or uint64.
 func fromPDU(pdu gosnmp.SnmpPDU) (any, error) {
 	switch value := pdu.Value.(type) {
 	case nil:
@@ -145,6 +145,8 @@ func fromPDU(pdu gosnmp.SnmpPDU) (any, error) {
 	case int:
 		return value, nil
 	case int64:
+		return value, nil
+	case uint:
 		return value, nil
 	case uint32:
 		return value, nil

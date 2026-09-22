@@ -12,13 +12,16 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 4 — RESTCONF and L2 switching.** The repository builds, tests and starts; the
+> **Status: Phase 5 — synchronization.** The repository builds, tests and starts; the
 > foundations, managed-object models (radio, L2, sync, device), the running/candidate/startup
 > store, the router, the SNMP v2c agent with the Prometheus endpoint, the NETCONF subsystem
 > (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with rollback,
-> `create-subscription` notifications), the chi-based RESTCONF server and the L2 domain (VLAN and
+> `create-subscription` notifications), the chi-based RESTCONF server, the L2 domain (VLAN and
 > QinQ, MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm simulation)
-> are in place. The radio and sync domain logic lands in Phases 5–7; see [ROADMAP.md](ROADMAP.md).
+> and the sync domain (PTP state machine with holdover, SyncE source selection, ESMC/SSM quality
+> levels, simulated offset/jitter, vendor SNMP OIDs and `POST /api/simulate/sync-loss`) are in
+> place. The radio domain and the cross-domain scenario land in Phase 6; see
+> [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 

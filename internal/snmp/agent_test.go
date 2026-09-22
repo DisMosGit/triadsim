@@ -18,12 +18,15 @@ import (
 )
 
 const (
-	sysDescrOID = "1.3.6.1.2.1.1.1.0"
-	sysNameOID  = "1.3.6.1.2.1.1.5.0"
-	ifDescrOID  = "1.3.6.1.2.1.2.2.1.2"
-	rssiOID     = "1.3.6.1.4.1.99999.1.1.1.0"
-	txPowerOID  = "1.3.6.1.4.1.99999.1.1.4.0"
-	atpcOID     = "1.3.6.1.4.1.99999.1.1.5.0"
+	sysDescrOID  = "1.3.6.1.2.1.1.1.0"
+	sysNameOID   = "1.3.6.1.2.1.1.5.0"
+	ifDescrOID   = "1.3.6.1.2.1.2.2.1.2"
+	rssiOID      = "1.3.6.1.4.1.99999.1.1.1.0"
+	txPowerOID   = "1.3.6.1.4.1.99999.1.1.4.0"
+	atpcOID      = "1.3.6.1.4.1.99999.1.1.5.0"
+	ptpStateOID  = "1.3.6.1.4.1.99999.2.1.1.0"
+	ptpDomainOID = "1.3.6.1.4.1.99999.2.1.3.0"
+	syncEQLOID   = "1.3.6.1.4.1.99999.2.1.5.0"
 )
 
 // newTestRouter returns a router over a seeded Memory store.
@@ -130,6 +133,41 @@ func TestGetVendorRSSI(t *testing.T) {
 	require.Len(t, result.Variables, 1)
 	assert.Equal(t, gosnmp.OpaqueDouble, result.Variables[0].Type)
 	assert.Equal(t, -72.5, result.Variables[0].Value)
+}
+
+// The vendor synchronization objects answer the seeded state: a locked clock on
+// domain 24 whose selected SyncE source carries QL-PRC(2).
+func TestGetVendorSync(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Get([]string{ptpStateOID, ptpDomainOID, syncEQLOID})
+
+	require.NoError(t, err)
+	require.Len(t, result.Variables, 3)
+	assert.Equal(t, 3, result.Variables[0].Value, "the seeded PTP clock is locked")
+	assert.EqualValues(t, 24, result.Variables[1].Value)
+	assert.Equal(t, 2, result.Variables[2].Value, "eth0 carries QL-PRC(2)")
+}
+
+// A writable sync object goes through the same whole-device validation as the
+// radio objects.
+func TestSetPTPDomain(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Set([]gosnmp.SnmpPDU{{Name: ptpDomainOID, Type: gosnmp.Gauge32, Value: uint32(25)}})
+	require.NoError(t, err)
+	require.Equal(t, gosnmp.NoError, result.Error)
+
+	got, err := client.Get([]string{ptpDomainOID})
+	require.NoError(t, err)
+	assert.EqualValues(t, 25, got.Variables[0].Value)
+
+	// A domain outside 0..127 is rejected by the model.
+	result, err = client.Set([]gosnmp.SnmpPDU{{Name: ptpDomainOID, Type: gosnmp.Gauge32, Value: uint32(200)}})
+	require.NoError(t, err)
+	assert.Equal(t, gosnmp.WrongValue, result.Error)
 }
 
 func TestGetUnknownOID(t *testing.T) {

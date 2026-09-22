@@ -133,55 +133,98 @@ TriadSim models this behavior by allowing the user to configure a preference fla
 
 ```
 internal/sync/
-├── state.go          # Clock state definitions and transitions
-├── state_machine.go  # StateMachine implementation
-├── holdover.go       # Holdover timer and drift simulation
-├── bmca.go           # BMCA attribute modeling
-├── synce.go          # SyncE/ESMC QL state
-└── ptp.go            # PTP model integration
+├── doc.go      # package overview and scope
+├── manager.go  # Manager: Run/Tick, source selection refresh, offset/jitter
+├── ptp.go      # PTP state machine (see PTP.md)
+├── synce.go    # SyncE source selection
+└── esmc.go     # QL/SSM mapping and the simplified ESMC message
 ```
+
+The SyncE objects live in `internal/model/sync.go` as `SyncEState`,
+`SyncEInterface` and `ESMC` with `path`/`xml`/`json` tags; `internal/router`
+maps them to RESTCONF/NETCONF paths and to the vendor OIDs, and the domain is
+wired into `start` next to the L2 domain.
 
 ### 5.2. SyncE Model
 
 ```go
+type SyncEState struct {
+    Enabled            bool             `path:"enabled"`
+    SelectedSource     string           `path:"selected-source" config:"false"`
+    SelectedQL         QL               `path:"selected-ql" config:"false"`
+    SelectedExtendedQL string           `path:"selected-extended-ql" config:"false"`
+    Interfaces         []SyncEInterface `path:"interfaces/interface"`
+    ESMC               ESMC             `path:"esmc"`
+}
+
 type SyncEInterface struct {
-    Name         string `path:"name" json:"name"`
-    Port         int    `path:"port" json:"port"`
-    QL           int    `path:"ql" json:"ql"`           // SSM code (e.g., 0x2 = PRC)
-    ExtendedQL   int    `path:"extended-ql" json:"extended-ql"` // eSSM code
-    SSMEnabled   bool   `path:"ssm-enabled" json:"ssm-enabled"`
-    Priority     uint8  `path:"priority" json:"priority"`
-    PTPPreference bool  `path:"ptp-preference" json:"ptp-preference"`
+    Name          string `path:"name" key:"true"`
+    SSMEnabled    bool   `path:"ssm-enabled"`
+    QL            QL     `path:"ql"`          // "QL-PRC", "QL-SSU-A", ...
+    ExtendedQL    string `path:"extended-ql"` // "QL-PRTC", "QL-ePRTC", "QL-eEEC", or empty
+    Priority      uint8  `path:"priority"`
+    PTPPreference bool   `path:"ptp-preference"`
+}
+
+type ESMC struct {
+    Enabled       bool   `path:"enabled"`
+    TxInterval    uint32 `path:"tx-interval"`
+    ExtendedCodes bool   `path:"extended-codes"`
 }
 ```
 
+The interface list is closed (seeded with `eth0` and `eth1`), like the STP port
+list: SyncE is a feature of the device's Ethernet ports. The three
+`selected-*` leaves are read-only state.
+
 ### 5.3. QL State Machine
 
-TriadSim maintains a QL state per SyncE-capable interface. The QL state changes in response to:
+TriadSim maintains a QL state per SyncE-capable interface and re-runs the source
+selection on every tick of the injected clock (5 s by default). A source
+changes in response to:
 
-- **Manual injection** via RESTCONF (`POST /api/simulate/synce-ql`)
-- **PTP state changes** (e.g., PTP transitioning to holdover may trigger a QL degradation)
-- **Configuration changes** via NETCONF or RESTCONF
-- **EventBus events** from other simulation modules
+- **Configuration** via NETCONF or RESTCONF (`synce/interfaces/interface[name=…]/ql`,
+  `…/priority`, `…/ssm-enabled`, `synce/enabled`);
+- **Source loss** through `sync.Manager.SyncLoss`, which the RESTCONF
+  `/api/simulate/sync-loss` endpoint calls;
+- **PTP state changes** once the cross-domain wiring of Phase 6.5 subscribes to
+  the radio alarms.
+
+The selection order is: the best quality level (QL-PRC, QL-SSU-A, QL-SSU-B,
+QL-SEC), then the lowest configured `priority`, then the interface the PTP
+receiver prefers (`ptp-preference`), and finally the interface name, so the
+choice is deterministic. `QL-DNU` is never selected, an interface with
+`ssm-enabled` false is skipped, and when no candidate exists the selection is
+empty. The result is written to `synce/selected-source`,
+`synce/selected-ql` and `synce/selected-extended-ql`.
 
 ### 5.4. Event Types
 
-| Event Type | Payload | Consumers |
-|---|---|---|
-| `SyncEQLChanged` | `{port, oldQL, newQL, extendedQL}` | SNMP trap sender, NETCONF notification, RESTCONF subscribers, Prometheus |
-| `SyncEInterfaceDown` | `{port}` | SNMP trap sender |
-| `SyncEInterfaceUp` | `{port}` | SNMP trap sender |
-| `SyncEPTPPreferenceChanged` | `{port, preferred}` | Prometheus, CLI logger |
+SyncE does not define its own bus types: the domain publishes the generic
+`StateTransition`, `AlarmRaised` and `AlarmCleared` events documented in
+`docs/eventbus.md`. A QL change is visible as a change of the selection state
+leaves; trap and metric producers subscribe to the bus events.
 
 ### 5.5. Integration with PTP State Machine
 
-The SyncE QL state is linked to the PTP state machine:
+Both parts of the domain are managed by one `sync.Manager`, so the SyncE
+selection and the PTP clock are read and written consistently:
 
-- When PTP transitions to **Holdover-In-Specification**, the SyncE QL is maintained at the last known value.
-- When PTP transitions to **Holdover-Out-Of-Specification**, the SyncE QL is degraded to QL-SEC (or QL-DNU if the holdover timer exceeds the configured limit).
-- When PTP restores to **Locked**, the SyncE QL is restored to the value corresponding to the PTP source quality.
+- PTP `locked` keeps the QL selection as configured.
+- When PTP enters `holdover-in-spec`, the SyncE selection is left untouched (the
+  last known quality is maintained).
+- When the holdover expires (`holdover-out-of-spec`), the domain raises the PTP
+  holdover alarm; a SyncE QL degradation on top of it is planned for the
+  cross-domain work of Phase 6.
+- A restored source locks the clock again and clears the alarm.
 
-This linkage is configurable and can be disabled for independent testing.
+### 5.6. ESMC/SSM Mapping
+
+`internal/sync/esmc.go` maps the model quality levels to their codes and vice
+versa (`SSMCode`, `QLFromSSM`, `ExtendedSSMCode`, `Rank`) and models one
+simplified `Message{QL, ExtendedQL}` with a `Validate()`. The simulator never
+encodes or decodes an ESMC PDU on the wire: the codes are what the vendor SNMP
+objects (`simSyncSyncEQL`, `simSyncSyncEExtendedQL`) report.
 
 ---
 
@@ -193,16 +236,21 @@ TriadSim exposes SyncE QL information through vendor-specific OIDs in the enterp
 
 | OID | Object | Type | Access | Description |
 |---|---|---|---|---|
-| `1.3.6.1.4.1.99999.2.1.5` | `simSyncSyncEQL` | Integer | read-only | Current SyncE QL for the primary interface |
-| `1.3.6.1.4.1.99999.2.1.6` | `simSyncSyncEExtendedQL` | Integer | read-only | Current extended QL (eSSM) |
-| `1.3.6.1.4.1.99999.2.1.7` | `simSyncSyncEInterfaceTable` | Table | read-only | Per-interface SyncE state |
-| `1.3.6.1.4.1.99999.2.1.7.1.1` | `simSyncSyncEIfIndex` | Integer | read-only | Interface index |
-| `1.3.6.1.4.1.99999.2.1.7.1.2` | `simSyncSyncEIfQL` | Integer | read-only | QL for the interface |
-| `1.3.6.1.4.1.99999.2.1.7.1.3` | `simSyncSyncEIfSSMEnabled` | TruthValue | read-only | SSM enabled flag |
+| `1.3.6.1.4.1.99999.2.1.5.0` | `simSyncSyncEQL` | Integer | read-only | QL of the selected source, as an SSM code |
+| `1.3.6.1.4.1.99999.2.1.6.0` | `simSyncSyncEExtendedQL` | Integer | read-only | Extended QL (eSSM code) of the selected source, 0 when unset |
+| `1.3.6.1.4.1.99999.2.1.7.1.1.<ifIndex>` | `simSyncSyncEIfQL` | Integer | read-only | QL for the interface, as an SSM code |
+| `1.3.6.1.4.1.99999.2.1.7.1.2.<ifIndex>` | `simSyncSyncEIfSSMEnabled` | Integer | read-only | SSM enabled flag as TruthValue |
+
+The interface table has no separate index column: the instance sub-identifier is
+the interface index (radio0=1, eth0=2, eth1=3), the same instance the interface
+and bridge MIB tables use. The SSM codes are documented in Appendix A; the
+extended codes are `QL-PRTC`=0x20, `QL-ePRTC`=0x21 and `QL-eEEC`=0x22.
 
 ### 6.2. NETCONF
 
-SyncE configuration is available under the `sim-sync` YANG module.
+SyncE configuration is available under the `sim-sync` YANG module. The
+`selected-*` leaves are read-only (`config:"false"`) and are not returned by
+`get-config`.
 
 ```xml
 <rpc message-id="1" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
@@ -210,13 +258,20 @@ SyncE configuration is available under the `sim-sync` YANG module.
     <target><candidate/></target>
     <config>
       <synce xmlns="urn:sim:sync">
-        <interface>
-          <name>eth0</name>
-          <ssm-enabled>true</ssm-enabled>
-          <ql>2</ql>
-          <priority>10</priority>
-          <ptp-preference>true</ptp-preference>
-        </interface>
+        <enabled>true</enabled>
+        <interfaces>
+          <interface>
+            <name>eth0</name>
+            <ssm-enabled>true</ssm-enabled>
+            <ql>QL-PRC</ql>
+            <priority>10</priority>
+            <ptp-preference>true</ptp-preference>
+          </interface>
+        </interfaces>
+        <esmc>
+          <enabled>true</enabled>
+          <tx-interval>1</tx-interval>
+        </esmc>
       </synce>
     </config>
   </edit-config>
@@ -226,42 +281,40 @@ SyncE configuration is available under the `sim-sync` YANG module.
 ### 6.3. RESTCONF
 
 ```bash
-# Get SyncE state
-curl http://localhost:8080/restconf/data/sim-sync:synce/state
-# {"sim-sync:state":{"ql":2,"extended-ql":0,"ssm-enabled":true}}
+# Get the selected source and its quality level.
+curl http://localhost:8080/restconf/data/sim-sync:synce/selected-source
+# {"sim-sync:selected-source":"eth0"}
+curl http://localhost:8080/restconf/data/sim-sync:synce/selected-ql
+# {"sim-sync:selected-ql":"QL-PRC"}
 
-# Configure SyncE interface
-curl -X PATCH http://localhost:8080/restconf/data/sim-sync:synce/interface=eth0 \
+# Get the whole SyncE subtree, including the read-only selection.
+curl 'http://localhost:8080/restconf/data/sim-sync:synce?content=all'
+
+# Configure a SyncE interface.
+curl -X PATCH http://localhost:8080/restconf/data/sim-sync:synce/interfaces/interface=eth0 \
   -H 'Content-Type: application/yang-data+json' \
-  -d '{"sim-sync:ssm-enabled":true,"sim-sync:ql":2,"sim-sync:priority":10}'
+  -d '{"sim-sync:interface":{"ssm-enabled":true,"ql":"QL-PRC","priority":10}}'
 
-# Inject SyncE QL change
-curl -X POST http://localhost:8080/api/simulate/synce-ql \
-  -H 'Content-Type: application/json' \
-  -d '{"port":"eth0","ql":11}'
+# Lose the synchronization source: PTP enters holdover.
+curl -X POST http://localhost:8080/api/simulate/sync-loss \
+  -H 'Content-Type: application/json' -d '{"port":"eth0"}'
 ```
+
+An invalid quality level answers `422 invalid-value`; the selection itself is
+read-only and answers `403 access-denied`.
 
 ### 6.4. CLI
 
-```bash
-# Show SyncE state
-go run ./cmd/simulator dump --synce
-
-# Show per-interface SyncE details
-go run ./cmd/simulator dump --synce --interface eth0
-
-# Inject SyncE QL change
-go run ./cmd/simulator synce ql set --port eth0 --ql 4
-
-# Force SyncE QL degradation
-go run ./cmd/simulator synce ql degrade --port eth0
-```
+The cobra commands (`dump --synce`, `synce ql set`) arrive in Phase 6.6. Until
+then SyncE is driven through RESTCONF or NETCONF.
 
 ---
 
 ## 7. Metrics
 
-TriadSim exposes the following Prometheus metrics for SyncE:
+The Prometheus metrics below are **planned for Phase 6.4** and are not exposed
+yet. In Phase 5 a QL change is visible through the `synce/selected-*` state
+leaves and, indirectly, through the PTP state transitions on the EventBus.
 
 | Metric | Type | Description |
 |---|---|---|
@@ -280,12 +333,12 @@ TriadSim intentionally simplifies SyncE to focus on management plane testing:
 | Aspect | TriadSim Behavior |
 |---|---|
 | **Ethernet PHY clock recovery** | Not implemented; frequency state is maintained at the management level |
-| **ESMC frame generation** | Not generated; QL changes are triggered via API or EventBus |
-| **SSM TLV encoding/decoding** | Not performed on the wire; SSM codes are stored as integers |
+| **ESMC frame generation** | Not generated; QL changes come from configuration or the simulation endpoint |
+| **SSM TLV encoding/decoding** | Not performed on the wire; only the SSM/eSSM code mapping is modeled |
 | **Slow protocol (OSSP) framing** | Not implemented |
-| **QL-enabled selection algorithm** | Simplified; QL and priority are configurable, selection is deterministic |
-| **Extended SSM TLV** | Modeled as a separate integer field; not encoded in ESMC |
-| **SyncE-to-PTP QL propagation** | Modeled via EventBus linkage; not via real ESMC/PTP message exchange |
+| **QL-enabled selection algorithm** | Simplified; quality level, priority and PTP preference are configurable and the selection is deterministic |
+| **Extended SSM TLV** | Modeled as a separate string leaf; not encoded in ESMC |
+| **SyncE-to-PTP QL propagation** | Both parts share one `sync.Manager`; the cross-domain linkage to radio alarms arrives in Phase 6 |
 | **Multi-domain synchronization** | Single domain per interface; no cross-domain QL leakage modeling |
 
 These simplifications allow the simulator to be lightweight and focused on integration testing with external management systems that monitor and control synchronization state.

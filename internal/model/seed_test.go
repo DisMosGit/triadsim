@@ -62,6 +62,23 @@ func TestDefaultDeviceRadioLink(t *testing.T) {
 	assert.Equal(t, "4096QAM", link.Profiles[11].Modulation)
 }
 
+func TestDefaultDeviceSync(t *testing.T) {
+	device := DefaultDevice()
+
+	assert.Equal(t, PTPModeMaster, device.PTP.Mode)
+	assert.Equal(t, uint8(24), device.PTP.Domain)
+	assert.Equal(t, uint32(300), device.PTP.HoldoverTimeout)
+	assert.Equal(t, PTPStateLocked, device.PTP.State)
+
+	assert.True(t, device.SyncE.Enabled)
+	assert.Equal(t, "eth0", device.SyncE.SelectedSource)
+	assert.Equal(t, QLPRC, device.SyncE.SelectedQL)
+	require.Len(t, device.SyncE.Interfaces, 2)
+	assert.Equal(t, "eth1", device.SyncE.Interfaces[1].Name)
+	assert.Equal(t, QLSSUA, device.SyncE.Interfaces[1].QL)
+	assert.True(t, device.SyncE.ESMC.Enabled)
+}
+
 func TestDefaultDeviceReturnsFreshCopy(t *testing.T) {
 	first := DefaultDevice()
 	first.Interfaces[0].RadioLink.TxPower = 1

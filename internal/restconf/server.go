@@ -52,6 +52,12 @@ type StormSimulator interface {
 	Storm(ctx context.Context, port string, packets uint32) error
 }
 
+// SyncSimulator injects the loss of a synchronization source. It is satisfied
+// by the sync domain; a nil SyncSimulator answers with operation-not-supported.
+type SyncSimulator interface {
+	SyncLoss(ctx context.Context, source string) (string, error)
+}
+
 // Options configures a Server. Addr wins over Port when both are set; an empty
 // Addr means ":Port".
 type Options struct {
@@ -61,6 +67,8 @@ type Options struct {
 	Port int
 	// Storm receives the simulation endpoint's requests.
 	Storm StormSimulator
+	// Sync receives the synchronization simulation endpoint's requests.
+	Sync SyncSimulator
 }
 
 // Server serves RESTCONF over HTTP. It owns one TCP listener; every request is
@@ -156,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("/streams/*", s.handleNotImplemented)
 	})
 	mux.HandleFunc("/api/simulate/l2-storm", s.handleStorm)
+	mux.HandleFunc("/api/simulate/sync-loss", s.handleSyncLoss)
 
 	return mux
 }
@@ -375,6 +384,43 @@ func (s *Server) handleStorm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", MediaTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "port": request.Port, "packets": request.Packets})
+}
+
+// handleSyncLoss implements POST /api/simulate/sync-loss: it drives the PTP
+// clock into holdover because its synchronization source was lost. An empty
+// port means the loss is not attributed to one interface.
+func (s *Server) handleSyncLoss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeError(w, r, methodNotAllowed(http.MethodPost))
+		return
+	}
+	if s.opts.Sync == nil {
+		s.writeError(w, r, notImplemented(r.URL.Path))
+		return
+	}
+
+	var request struct {
+		Port string `json:"port"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&request); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			s.writeError(w, r, tooLarge("request body exceeds the %d byte limit", maxBodyBytes))
+			return
+		}
+		s.writeError(w, r, malformedRequest("malformed request body: %v", err))
+		return
+	}
+
+	state, err := s.opts.Sync.SyncLoss(r.Context(), request.Port)
+	if err != nil {
+		s.writeError(w, r, newHTTPError(http.StatusUnprocessableEntity, errorTypeProtocol, "invalid-value", "%v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", MediaTypeJSON)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "port": request.Port, "state": state})
 }
 
 // mediaTypeOf returns the content type of a format.

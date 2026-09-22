@@ -113,7 +113,23 @@ The radio objects below are **implemented in Phase 1.8**. They are scalar object
 | `1.3.6.1.4.1.99999.1.1.7.0` | `simRadioAcmCapacity` | Gauge32 | read-only | Capacity of the active profile in Mbps |
 | `1.3.6.1.4.1.99999.1.1.8.0` | `simRadioAlarmStatus` | Integer | read-only | Radio alarm status — **Phase 6.2**, no model leaf yet |
 
-Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats. The other vendor objects (`simSyncPtp*`, `simSyncSyncE*`, `simL2VlanCount`) arrive with their domains in Phases 5 and 6 and are not registered yet; the L2 state itself is exposed through the standard MIBs above rather than a vendor subtree.
+Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats.
+
+The synchronization objects below are **implemented in Phase 5**. The clock is a single object (scalars end in `.0`); the SyncE interface table is indexed by the interface index (radio0=1, eth0=2, eth1=3). The remaining vendor objects (`simRadioAlarmStatus`, `simL2VlanCount`) arrive in Phase 6 and are not registered yet; the L2 state itself is exposed through the standard MIBs above rather than a vendor subtree.
+
+| OID | Object | Type | Access | Description |
+|---|---|---|---|---|
+| `1.3.6.1.4.1.99999.2.1.1.0` | `simSyncPtpState` | Integer | read-only | Clock state: freerun(1), acquiring(2), locked(3), holdover-in-spec(4), holdover-out-of-spec(5) |
+| `1.3.6.1.4.1.99999.2.1.2.0` | `simSyncPtpOffset` | OpaqueDouble | read-only | Clock offset in nanoseconds |
+| `1.3.6.1.4.1.99999.2.1.3.0` | `simSyncPtpDomain` | Gauge32 | read-write | PTP domain (0-127) |
+| `1.3.6.1.4.1.99999.2.1.4.0` | `simSyncPtpPriority1` | Gauge32 | read-write | BMCA priority1 |
+| `1.3.6.1.4.1.99999.2.1.5.0` | `simSyncSyncEQL` | Integer | read-only | QL of the selected SyncE source, as an SSM code |
+| `1.3.6.1.4.1.99999.2.1.6.0` | `simSyncSyncEExtendedQL` | Integer | read-only | eSSM code of the selected source, 0 when unset |
+| `1.3.6.1.4.1.99999.2.1.7.1.1.<ifIndex>` | `simSyncSyncEIfQL` | Integer | read-only | QL of one SyncE interface, as an SSM code |
+| `1.3.6.1.4.1.99999.2.1.7.1.2.<ifIndex>` | `simSyncSyncEIfSSMEnabled` | Integer TruthValue | read-only | SSM enabled (1) or disabled (2) |
+| `1.3.6.1.4.1.99999.2.1.8.0` | `simSyncPtpJitter` | OpaqueDouble | read-only | Clock jitter in nanoseconds |
+
+The SSM codes are `QL-PRC`=2, `QL-SSU-A`=4, `QL-SSU-B`=8, `QL-SEC`=11 and `QL-DNU`=15; the extended codes are `QL-PRTC`=0x20, `QL-ePRTC`=0x21 and `QL-eEEC`=0x22. See `docs/protocols/PTP.md` and `docs/protocols/SYNCE.md`.
 
 ---
 
@@ -281,6 +297,10 @@ The first two varbinds are mandatory for all SNMPv2-Trap-PDUs .
 | `1.3.6.1.4.1.99999.0.4` | `simSyncRestored` | Info | PTP source restored, transitioned to master |
 | `1.3.6.1.4.1.99999.0.5` | `simL2StormDetected` | Warning | Broadcast storm threshold exceeded |
 | `1.3.6.1.4.1.99999.0.6` | `simConfigChanged` | Info | Running configuration modified |
+
+Trap sending is **not implemented yet**: it arrives with Phase 6.3. Phase 5 publishes the PTP
+`StateTransition` and the holdover `AlarmRaised`/`AlarmCleared` events on the EventBus, which the
+trap sender will consume.
 
 ### 6.3. Trap Example
 

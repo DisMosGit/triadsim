@@ -6,9 +6,10 @@ import (
 )
 
 // Device is the root managed object: the system information, the interface
-// list and the L2 switching state. Router paths start here, for example
-// interfaces/interface[name=radio0]/radio-link/tx-power or
-// vlans/vlan[id=100]/name.
+// list, the L2 switching state and the synchronization state. Router paths
+// start here, for example
+// interfaces/interface[name=radio0]/radio-link/tx-power, vlans/vlan[id=100]/name
+// or ptp/clock/state.
 type Device struct {
 	SystemInfo SystemInfo  `path:"system-info" xml:"system-info" json:"system-info"`
 	Interfaces []Interface `path:"interfaces/interface" xml:"interfaces>interface" json:"interfaces"`
@@ -16,6 +17,8 @@ type Device struct {
 	MACTable   MACTable    `path:"mac-table" xml:"mac-table" json:"mac-table"`
 	STP        STPState    `path:"stp/state" xml:"stp>state" json:"stp"`
 	LLDP       LLDPConfig  `path:"lldp" xml:"lldp" json:"lldp"`
+	PTP        PTPClock    `path:"ptp/clock" xml:"ptp>clock" json:"ptp"`
+	SyncE      SyncEState  `path:"synce" xml:"synce" json:"synce"`
 }
 
 // SystemInfo is the device identity reported to every management plane. The
@@ -38,8 +41,8 @@ func (s SystemInfo) Validate() error {
 }
 
 // Validate checks the system information, every interface, the VLAN list, the
-// MAC table, the STP state and the LLDP configuration, and rejects duplicate
-// interface names and VLAN ids.
+// MAC table, the STP state, the LLDP configuration and the synchronization
+// clock, and rejects duplicate interface names and VLAN ids.
 func (d Device) Validate() error {
 	if err := d.SystemInfo.Validate(); err != nil {
 		return fmt.Errorf("system-info: %w", err)
@@ -75,6 +78,12 @@ func (d Device) Validate() error {
 	}
 	if err := d.LLDP.Validate(); err != nil {
 		return fmt.Errorf("lldp: %w", err)
+	}
+	if err := d.PTP.Validate(); err != nil {
+		return fmt.Errorf("ptp: %w", err)
+	}
+	if err := d.SyncE.Validate(); err != nil {
+		return fmt.Errorf("synce: %w", err)
 	}
 	return nil
 }

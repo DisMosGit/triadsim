@@ -54,14 +54,19 @@ type PTPClock struct {
 	HoldoverTimeout uint32  `path:"holdover-timeout" xml:"holdover-timeout" json:"holdover-timeout"`
 	State           string  `path:"state" xml:"state" json:"state" config:"false"`
 	Offset          float64 `path:"offset" xml:"offset" json:"offset" config:"false"`
+	Jitter          float64 `path:"jitter" xml:"jitter" json:"jitter" config:"false"`
 }
 
 // SyncEState is the managed object of the SyncE domain: the global switch, the
-// selected source and the per-interface quality levels.
+// selected source with its quality level, the per-interface quality levels and
+// the ESMC channel configuration.
 type SyncEState struct {
-	Enabled        bool             `path:"enabled" xml:"enabled" json:"enabled"`
-	SelectedSource string           `path:"selected-source" xml:"selected-source,omitempty" json:"selected-source,omitempty" config:"false"`
-	Interfaces     []SyncEInterface `path:"interfaces/interface" xml:"interfaces>interface" json:"interfaces"`
+	Enabled            bool             `path:"enabled" xml:"enabled" json:"enabled"`
+	SelectedSource     string           `path:"selected-source" xml:"selected-source,omitempty" json:"selected-source,omitempty" config:"false"`
+	SelectedQL         QL               `path:"selected-ql" xml:"selected-ql,omitempty" json:"selected-ql,omitempty" config:"false"`
+	SelectedExtendedQL string           `path:"selected-extended-ql" xml:"selected-extended-ql,omitempty" json:"selected-extended-ql,omitempty" config:"false"`
+	Interfaces         []SyncEInterface `path:"interfaces/interface" xml:"interfaces>interface" json:"interfaces"`
+	ESMC               ESMC             `path:"esmc" xml:"esmc" json:"esmc"`
 }
 
 // SyncEInterface is one SyncE-capable interface and its SSM state.
@@ -108,6 +113,9 @@ func (c PTPClock) Validate() error {
 	if !finite(c.Offset) {
 		return errors.New("offset must be a finite number")
 	}
+	if !finite(c.Jitter) {
+		return errors.New("jitter must be a finite number")
+	}
 	if c.State == "" {
 		return nil
 	}
@@ -119,7 +127,8 @@ func (c PTPClock) Validate() error {
 	}
 }
 
-// Validate checks the SyncE switch, the selected source and every interface.
+// Validate checks the SyncE switch, the selected source and quality level, the
+// ESMC channel and every interface.
 func (s SyncEState) Validate() error {
 	seen := make(map[string]struct{}, len(s.Interfaces))
 	for i, iface := range s.Interfaces {
@@ -135,6 +144,19 @@ func (s SyncEState) Validate() error {
 		if _, ok := seen[s.SelectedSource]; !ok {
 			return fmt.Errorf("selected-source %q does not name an interface", s.SelectedSource)
 		}
+	}
+	if s.SelectedQL != "" {
+		if err := s.SelectedQL.Validate(); err != nil {
+			return fmt.Errorf("selected-ql: %w", err)
+		}
+	}
+	switch s.SelectedExtendedQL {
+	case "", ExtendedQLPRTC, ExtendedQLPRTCEnhanced, ExtendedQLEECEnhanced:
+	default:
+		return fmt.Errorf("unknown selected extended-ql %q", s.SelectedExtendedQL)
+	}
+	if err := s.ESMC.Validate(); err != nil {
+		return fmt.Errorf("esmc: %w", err)
 	}
 	return nil
 }

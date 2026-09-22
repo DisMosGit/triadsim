@@ -27,6 +27,7 @@ The implementation lives in `internal/restconf` (routing, media types, HTTP stat
 - `?content=all|config|nonconfig`, default `all`.
 - The `ietf-restconf` error document (JSON) with `error-type`, `error-tag`, `error-path` and `error-message`.
 - `POST /api/simulate/l2-storm`, a simulator-specific endpoint (not part of RFC 8040) that injects a broadcast storm on one L2 port.
+- `POST /api/simulate/sync-loss`, a simulator-specific endpoint (not part of RFC 8040) that loses the PTP clock's synchronization source and drives it into holdover.
 
 **Not implemented**
 
@@ -199,9 +200,10 @@ Modules are defined in `internal/router/modules.go`. `ModuleFor` selects the mod
 | `sim-device` | `urn:sim:device` | `system-info`, `interfaces` |
 | `sim-l2-switching` | `urn:sim:l2-switching` | `vlans`, `mac-table`, `stp`, `lldp` |
 | `sim-radio-link` | `urn:sim:radio-link` | none at the data-tree root; owns `radio-link` and `modulation-profile`, both below `interfaces/interface[<key>]` |
-| `sim-sync` | `urn:sim:sync` | none reachable: the data model does not yet carry `ptp` or `synce` |
+| `sim-sync` | `urn:sim:sync` | `ptp` (below it `clock`) and `synce` |
 
-`sim-sync` is declared in the module table (its node names `ptp` and `synce` are mapped for paths such as `ptp/clock/state`), but `internal/model.Device` has no synchronization subtree, so no `sim-sync` resource can be addressed over RESTCONF today.
+`sim-sync` is reachable since Phase 5: `internal/model.Device` carries `ptp/clock` and `synce`,
+so RESTCONF addresses the PTP clock and the SyncE state and configuration.
 
 ### 4.4. TriadSim Resource Paths
 
@@ -224,6 +226,11 @@ The reachable data tree (from `internal/model` and `internal/model/seed.go`):
 | STP port | `/restconf/data/sim-l2-switching:stp/state/ports/port=eth0` | One STP port, keyed by `port` |
 | LLDP | `/restconf/data/sim-l2-switching:lldp` | LLDP configuration |
 | LLDP neighbour | `/restconf/data/sim-l2-switching:lldp/neighbors/neighbor=eth0` | One neighbour, keyed by `port` |
+| PTP clock | `/restconf/data/sim-sync:ptp/clock` | PTP configuration and clock state |
+| PTP clock leaf | `/restconf/data/sim-sync:ptp/clock/state` | One clock leaf (`state`, `offset`, `jitter`, `domain`, …) |
+| SyncE | `/restconf/data/sim-sync:synce` | SyncE switch, selection and ESMC configuration |
+| SyncE interface | `/restconf/data/sim-sync:synce/interfaces/interface=eth0` | One SyncE interface, keyed by `name` |
+| ESMC | `/restconf/data/sim-sync:synce/esmc` | ESMC channel configuration |
 
 List keys in the model:
 
@@ -236,6 +243,7 @@ List keys in the model:
 | `stp/state/ports/port` | `port` |
 | `lldp/neighbors/neighbor` | `port` |
 | `…/radio-link/modulation-profile` | `id` |
+| `synce/interfaces/interface` | `name` |
 
 ---
 
@@ -262,6 +270,7 @@ A method that is not allowed for the target is answered `405 method-not-allowed`
 | `PUT` on a list collection | `GET, HEAD, PATCH, POST, DELETE` |
 | `POST` on a resource that is not a list collection | `GET, HEAD, PUT, PATCH, DELETE` |
 | Wrong method on `/api/simulate/l2-storm` | `POST` |
+| Wrong method on `/api/simulate/sync-loss` | `POST` |
 
 ### 5.1. GET and HEAD
 
@@ -545,6 +554,7 @@ Routes:
 | `/restconf/operations`, `/restconf/operations/*` | `501 operation-not-supported` |
 | `/restconf/streams`, `/restconf/streams/*` | `501 operation-not-supported` |
 | `/api/simulate/l2-storm` | Simulation endpoint (`POST`) |
+| `/api/simulate/sync-loss` | Simulation endpoint (`POST`) |
 
 The server is stateless at the HTTP layer; state resides in the `internal/store` package (running/candidate/startup datastores).
 
@@ -607,6 +617,26 @@ A successful request is `202 Accepted` with `Content-Type: application/yang-data
 ```
 
 Errors: a malformed body is `400 malformed-message`; a missing `port` is `400 invalid-value`; a `Storm` failure (for example an unknown port) is `422 invalid-value`; a method other than `POST` is `405` with `Allow: POST`; and if the server was built without a storm simulator the endpoint is `501 operation-not-supported`. The production server is started with the L2 manager as the storm simulator, so the endpoint is live.
+
+The second simulation endpoint drives the sync domain (Phase 5):
+
+```
+POST /api/simulate/sync-loss
+```
+
+It loses the PTP clock's synchronization source, so the clock enters holdover. The request body is optional and carries one field:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `port` | string | SyncE interface that was lost, e.g. `eth0` (optional; when given it must name a SyncE interface) |
+
+A successful request is `202 Accepted` with a small status object naming the resulting clock state:
+
+```json
+{"port":"eth0","state":"holdover-in-spec","status":"ok"}
+```
+
+Errors: a malformed body is `400 malformed-message`; an unknown port is `422 invalid-value`; a method other than `POST` is `405` with `Allow: POST`; and without a sync simulator the endpoint is `501 operation-not-supported`.
 
 ---
 
@@ -758,7 +788,29 @@ curl -i -X POST http://localhost:8080/api/simulate/l2-storm \
 # {"packets":1500,"port":"eth0","status":"ok"}
 ```
 
-### 10.11. Retrieve XML
+### 10.11. Read the PTP Clock and Lose its Source
+
+```bash
+# The seeded clock is a locked master on domain 24.
+curl -s http://localhost:8080/restconf/data/sim-sync:ptp/clock/state
+# {"sim-sync:state":"locked"}
+
+# Lose the SyncE source eth0: the clock enters holdover.
+curl -i -X POST http://localhost:8080/api/simulate/sync-loss \
+  -H 'Content-Type: application/json' \
+  -d '{"port":"eth0"}'
+# HTTP/1.1 202 Accepted
+# {"port":"eth0","state":"holdover-in-spec","status":"ok"}
+
+curl -s http://localhost:8080/restconf/data/sim-sync:ptp/clock/state
+# {"sim-sync:state":"holdover-in-spec"}
+
+# The SyncE selection follows the configuration.
+curl -s http://localhost:8080/restconf/data/sim-sync:synce/selected-source
+# {"sim-sync:selected-source":"eth0"}
+```
+
+### 10.12. Retrieve XML
 
 ```bash
 curl -s http://localhost:8080/restconf/data/sim-device:system-info \
@@ -778,7 +830,7 @@ curl -s http://localhost:8080/restconf/data -H 'Accept: application/yang-data+xm
 # <data xmlns="urn:ietf:params:xml:ns:yang:ietf-restconf"><system-info xmlns="urn:sim:device">…</system-info>…</data>
 ```
 
-### 10.12. Write the Candidate Datastore
+### 10.13. Write the Candidate Datastore
 
 ```bash
 curl -i -X PUT 'http://localhost:8080/restconf/data/sim-l2-switching:vlans/vlan=200?datastore=candidate' \

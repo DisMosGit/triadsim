@@ -47,6 +47,9 @@ const (
 	// scopeVLAN exposes a leaf of every VLAN as a table column whose instance is
 	// the VLAN identifier.
 	scopeVLAN
+	// scopeSyncE exposes a leaf of every SyncE-capable interface as a table
+	// column whose instance is the interface index of the port.
+	scopeSyncE
 )
 
 // objectRule maps a model path to one SNMP object.
@@ -119,6 +122,19 @@ var objectRules = []objectRule{
 	{scope: scopeRadio, suffix: "atpc/enabled", oid: EnterpriseOID + ".1.1.5", typ: TypeInteger, convert: truthValue, decode: truthFromInt, writable: true},
 	{scope: scopeRadio, suffix: "acm/current-profile", oid: EnterpriseOID + ".1.1.6", typ: TypeInteger},
 	{scope: scopeRadio, suffix: "acm/current-capacity", oid: EnterpriseOID + ".1.1.7", typ: TypeGauge32},
+
+	// Vendor synchronization objects. The clock is a single object (scalar
+	// ".0"); the SyncE interface table is indexed by the interface index, the
+	// same instance the interface MIB tables use.
+	{scope: scopeScalar, suffix: "ptp/clock/state", oid: EnterpriseOID + ".2.1.1", typ: TypeInteger, convert: ptpStateValue},
+	{scope: scopeScalar, suffix: "ptp/clock/offset", oid: EnterpriseOID + ".2.1.2", typ: TypeOpaqueDouble},
+	{scope: scopeScalar, suffix: "ptp/clock/domain", oid: EnterpriseOID + ".2.1.3", typ: TypeGauge32, writable: true},
+	{scope: scopeScalar, suffix: "ptp/clock/priority1", oid: EnterpriseOID + ".2.1.4", typ: TypeGauge32, writable: true},
+	{scope: scopeScalar, suffix: "synce/selected-ql", oid: EnterpriseOID + ".2.1.5", typ: TypeInteger, convert: qlValue},
+	{scope: scopeScalar, suffix: "synce/selected-extended-ql", oid: EnterpriseOID + ".2.1.6", typ: TypeInteger, convert: extendedQLValue},
+	{scope: scopeSyncE, suffix: "ql", oid: EnterpriseOID + ".2.1.7.1.1", typ: TypeInteger, convert: qlValue},
+	{scope: scopeSyncE, suffix: "ssm-enabled", oid: EnterpriseOID + ".2.1.7.1.2", typ: TypeInteger, convert: truthValue},
+	{scope: scopeScalar, suffix: "ptp/clock/jitter", oid: EnterpriseOID + ".2.1.8", typ: TypeOpaqueDouble},
 }
 
 // Constant objects that have no model leaf.
@@ -253,6 +269,73 @@ func fdbStatusValue(v any) any {
 		return 5
 	}
 	return 3
+}
+
+// ptpStateValue maps a G.8275.1 clock state onto the integer the vendor object
+// reports: freerun(1), acquiring(2), locked(3), holdover-in-spec(4) and
+// holdover-out-of-spec(5). An unknown state is reported as freerun(1).
+func ptpStateValue(v any) any {
+	name, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch name {
+	case "freerun":
+		return 1
+	case "acquiring":
+		return 2
+	case "locked":
+		return 3
+	case "holdover-in-spec":
+		return 4
+	case "holdover-out-of-spec":
+		return 5
+	default:
+		return 1
+	}
+}
+
+// qlValue maps an ITU-T G.781 Option I quality level onto its 4-bit SSM code.
+// An empty quality level, which means no source is selected, is reported as
+// zero.
+func qlValue(v any) any {
+	name, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch name {
+	case "QL-PRC":
+		return 2
+	case "QL-SSU-A":
+		return 4
+	case "QL-SSU-B":
+		return 8
+	case "QL-SEC":
+		return 11
+	case "QL-DNU":
+		return 15
+	default:
+		return 0
+	}
+}
+
+// extendedQLValue maps an extended (eSSM) quality level onto its code from
+// G.8264 Amendment 2. An empty value is reported as zero.
+func extendedQLValue(v any) any {
+	name, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch name {
+	case "QL-PRTC":
+		return 0x20
+	case "QL-ePRTC":
+		return 0x21
+	case "QL-eEEC":
+		return 0x22
+	default:
+		return 0
+	}
 }
 
 // CompareOID compares two OIDs component by component, numerically when a

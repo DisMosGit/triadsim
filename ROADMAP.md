@@ -562,45 +562,87 @@
 > **Результат фазы:** PTP master + holdover переход; переходы в EventBus.
 
 ### 5.1. PTP state machine
-- [ ] `internal/sync/ptp.go` — `State` (`freerun`, `master`, `holdover`) · `M` 🧪
-- [ ] `Handle(event Event) State` · `M` 🧪
-- [ ] Таймер holdover через `clock.Clock` · `M` 🧪
-- [ ] Публикация `StateTransition` в EventBus · `S` 🧪
-- [ ] Табличные тесты переходов · `M` 🧪
-- [ ] Коммит: `feat(sync): ptp state machine` · `L` 🧪
+- [x] `internal/sync/ptp.go` — `State` (`freerun`, `acquiring`, `locked`, `holdover-in-spec`, `holdover-out-of-spec`) · `M` 🧪
+- [x] `Handle(event Event) State` · `M` 🧪
+- [x] Таймер holdover через `clock.Clock` · `M` 🧪
+- [x] Публикация `StateTransition` в EventBus · `S` 🧪
+- [x] Табличные тесты переходов · `M` 🧪
+- [x] Коммит: `feat(sync): ptp state machine` · `L` 🧪
 
 ### 5.2. SyncE
-- [ ] `internal/sync/synce.go` — `Enabled`, `SelectedSource`, `Port` state · `M` 🧪
-- [ ] Выбор источника (приоритет, QL) · `M` 🧪
-- [ ] Коммит: `feat(sync): synce` · `M` 🧪
+- [x] `internal/sync/synce.go` — `Enabled`, `SelectedSource`, `Port` state · `M` 🧪
+- [x] Выбор источника (приоритет, QL) · `M` 🧪
+- [x] Коммит: `feat(sync): synce` · `M` 🧪
 
 ### 5.3. ESMC / SSM
-- [ ] `internal/sync/esmc.go` — ESMC-сообщения (упрощённо) · `M` 🧪
-- [ ] QL: `QL-PRC`, `QL-SSU-A`, `QL-SSU-B`, `QL-SEC`, `QL-DNU` · `S` 🧪
-- [ ] Маппинг QL → приоритет · `S` 🧪
-- [ ] Коммит: `feat(sync): esmc + ssm` · `M` 🧪
+- [x] `internal/sync/esmc.go` — ESMC-сообщения (упрощённо) · `M` 🧪
+- [x] QL: `QL-PRC`, `QL-SSU-A`, `QL-SSU-B`, `QL-SEC`, `QL-DNU` · `S` 🧪
+- [x] Маппинг QL → приоритет · `S` 🧪
+- [x] Коммит: `feat(sync): esmc + ssm` · `M` 🧪
 
 ### 5.4. Holdover и quality
-- [ ] Время удержания при потере источника · `M` 🧪
-- [ ] Публикация `AlarmRaised` при истечении holdover · `S` 🧪
-- [ ] Коммит: `feat(sync): holdover + quality` · `M` 🧪
+- [x] Время удержания при потере источника · `M` 🧪
+- [x] Публикация `AlarmRaised` при истечении holdover · `S` 🧪
+- [x] Коммит: `feat(sync): holdover + quality` · `M` 🧪
 
 ### 5.5. Jitter/offset (симуляция)
-- [ ] Генерация значений offset и jitter по источнику · `M` 🧪
-- [ ] Публикация в модель `PTPClock` · `S` 🧪
-- [ ] Коммит: `feat(sync): jitter + offset simulation` · `M` 🧪
+- [x] Генерация значений offset и jitter по источнику · `M` 🧪
+- [x] Публикация в модель `PTPClock` · `S` 🧪
+- [x] Коммит: `feat(sync): jitter + offset simulation` · `M` 🧪
 
 ### 5.6. RESTCONF/SNMP привязка sync
-- [ ] RESTCONF `sim-sync:ptp/clock` (GET/PATCH) · `M` 🧪
-- [ ] Vendor OID для sync state · `S` 🧪
-- [ ] Коммит: `feat(sync): restconf + snmp bindings` · `M` 🧪
+- [x] RESTCONF `sim-sync:ptp/clock` (GET/PATCH) · `M` 🧪
+- [x] Vendor OID для sync state · `S` 🧪
+- [x] Коммит: `feat(sync): restconf + snmp bindings` · `M` 🧪
 
 ### 5.7. Документация sync
-- [ ] `docs/protocols/PTP.md` — IEEE 1588, state machine, domain, master/holdover/freerun, упрощения · `L` 📝
-- [ ] `docs/protocols/SYNCE.md` — ESMC/SSM, QL, связь с PTP, упрощения · `M` 📝
-- [ ] Коммит: `docs: ptp + synce` · `M` 📝
+- [x] `docs/protocols/PTP.md` — IEEE 1588, state machine, domain, master/holdover/freerun, упрощения · `L` 📝
+- [x] `docs/protocols/SYNCE.md` — ESMC/SSM, QL, связь с PTP, упрощения · `M` 📝
+- [x] Коммит: `docs: ptp + synce` · `M` 📝
 
 **✅ Phase 5 завершена, когда:** PTP master + holdover переход; переходы в EventBus; RESTCONF отдаёт state.
+
+> **Отклонения при реализации Phase 5:**
+> - **Словарь состояний PTP — пять clock-level состояний G.8275.1** (`freerun`, `acquiring`,
+>   `locked`, `holdover-in-spec`, `holdover-out-of-spec`), уже описанные моделью и `PTP.md`, а не
+>   «freerun/master/holdover» из эскиза задачи. `mode: master` — это конфигурация, её
+>   операционное состояние — `locked`.
+> - **`Handle(ctx, Event) (State, error)`** вместо `Handle(event) State`: переход пишет store и
+>   может отказать; `State` — алиас `string`, поэтому домен реализует primitive-интерфейс
+>   `restconf.SyncSimulator` без адаптера.
+> - **`POST /api/simulate/sync-loss` перенесён из 6.1** (как `l2-storm` из 6.1 был сделан в 4.10):
+>   иначе переход в holdover нельзя было бы показать одной `curl`-командой. В 6.1 остаются
+>   `radio-failure` и `sync-restore`/восстановление, которое придёт с 6.5.
+> - **`internal/sync/manager.go`** — дополнительный файл к `ptp.go`/`synce.go`/`esmc.go`: Deps,
+>   `New`/`Run`/`Tick`, чтение конфигурации и запись состояния, таймер holdover.
+> - **Таймер holdover** — `clock.AfterFunc`, который лишь будит цикл `Run` буферизованным каналом
+>   (как tick-цикл `internal/l2`), а переход применяется под мьютексом домена; `Tick` дополнительно
+>   проверяет дедлайн. Тесты идут на `FakeClock` без `time.Sleep`.
+> - **Сид синхронизации заполнен**: PTP стартует `master`/`locked` (мастер-клок захвачен на свою
+>   опору — нет ложного перехода на каждом старте), SyncE выбирает `eth0`/`QL-PRC`; прецедент —
+>   засеянные STP/MAC-state фазы 4.
+> - **ESMC вложен в `synce/esmc`**, а не отдельным top-level контейнером: так модуль `sim-sync`
+>   владеет им без нового case в `ModuleFor`.
+> - **Модель расширена тремя state-листьями** `ptp/clock/jitter`, `synce/selected-ql` и
+>   `synce/selected-extended-ql` (`config:"false"`), чтобы SNMP/RESTCONF отдавали состояние
+>   выбранного источника и дрожание; `PTPClock.Validate` проверяет конечность jitter.
+> - **Vendor OID `1.3.6.1.4.1.99999.2.1.*`**: скаляры `.1`–`.4` (state/offset/domain/priority1),
+>   `.5`/`.6` (QL/eSSM выбранного источника), `.7.1.{1,2}` — таблица SyncE по ifIndex (QL,
+>   ssm-enabled), `.8` — jitter. Отдельной колонки ifIndex нет: instance sub-identifier и есть
+>   индекс интерфейса. `simSyncHoldover`/`simSyncRestored` traps — по-прежнему 6.3.
+> - **Метрики PTP** (`simulator_ptp_state`, `..._transitions_total`, offset) не реализованы —
+>   это 6.4; `PTP.md` §10 и `SYNCE.md` §7 помечены как план.
+> - **`fromPDU` расширен типом `uint`**: `gosnmp` декодирует полученный Gauge32 как `uint`, а не
+>   `uint32`, поэтому первый записываемый Gauge32-объект (`ptp/clock/domain`) иначе получал
+>   `wrongType`. Добавлен case и тест `TestFromPDU`.
+> - **Публикация**: каждое реальное изменение пишет `StateTransition` (resource `ptp/clock`,
+>   пустой severity, как у STP), истечение holdover — `AlarmRaised` (`major`), возврат из
+>   `holdover-out-of-spec` — `AlarmCleared` (`cleared`).
+> - **`startup.json` старой версии** не содержит листьев sync; список `synce/interfaces/interface`
+>   прунится при гидратации снимка (как любой список, отсутствующий в датасторе), поэтому такой
+>   файл надо удалить — заметка в `docs/config.md`.
+> - **`configs/default.yaml` не менялся**: holdover-timeout и SyncE-параметры живут в seed-модели.
+> - Golden-транскрипты NETCONF не изменились: все фильтры в них не задевают новые контейнеры.
 
 ---
 
@@ -611,8 +653,8 @@
 
 ### 6.1. API симуляции
 - [ ] `internal/restconf/sim/` — `POST /api/simulate/radio-failure` · `M` 🧪
-- [ ] `POST /api/simulate/sync-loss` · `S` 🧪
-- [ ] `POST /api/simulate/l2-storm` · `S` 🧪
+- [x] `POST /api/simulate/sync-loss` · `S` 🧪 (сделан в Phase 5, `internal/restconf/server.go`)
+- [x] `POST /api/simulate/l2-storm` · `S` 🧪 (сделан в 4.10, `internal/restconf/server.go`)
 - [ ] Коммит: `feat(restconf): simulation API` · `M` 🧪
 
 ### 6.2. Radio: link budget и аварии

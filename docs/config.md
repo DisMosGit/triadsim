@@ -76,6 +76,12 @@ The document is versioned (`version: 1`) and each leaf stores its Go type next t
 accepted kinds in [store.md](store.md#persistence). A missing file is not an error — the first
 boot simply starts from the built-in seed.
 
+A `startup.json` written by an older version does not contain the leaves added since. Containers
+keep their seeded values, but a **list** that is absent from the datastore is pruned from the
+hydrated device (see the snapshot hydration in [architecture.md](architecture.md)), so a
+pre-Phase-5 file boots without the seeded SyncE interfaces. Delete `startup.json` to pick up the
+seed again.
+
 ## Notes
 
 The configuration is intentionally flat, matching the field list in

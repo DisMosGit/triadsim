@@ -22,6 +22,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/snmp"
 	"github.com/DisMosGit/triadsim/internal/store"
+	syncd "github.com/DisMosGit/triadsim/internal/sync"
 )
 
 // shutdownTimeout bounds the HTTP shutdown when the context is cancelled.
@@ -107,6 +108,11 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		return fmt.Errorf("setup l2 domain: %w", err)
 	}
 
+	syncManager, err := syncd.New(syncd.Deps{Router: r, Bus: bus, Clock: clock.RealClock{}})
+	if err != nil {
+		return fmt.Errorf("setup sync domain: %w", err)
+	}
+
 	m := metrics.New(clock.RealClock{}, time.Now())
 
 	metricsAddr := deps.metricsAddr
@@ -146,6 +152,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		Addr:  deps.restconfAddr,
 		Port:  cfg.RESTCONF.Port,
 		Storm: l2Manager,
+		Sync:  syncManager,
 	})
 	if err := restconfServer.Listen(); err != nil {
 		_ = server.Close()
@@ -160,6 +167,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	go func() { serveErr <- netconfServer.Serve(ctx) }()
 	go func() { serveErr <- restconfServer.Serve(ctx) }()
 	go l2Manager.Run(ctx)
+	go syncManager.Run(ctx)
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,

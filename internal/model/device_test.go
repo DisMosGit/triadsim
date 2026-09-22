@@ -79,6 +79,9 @@ func TestDeviceValidate(t *testing.T) {
 		{name: "invalid mac table", mutate: func(d *Device) { d.MACTable.AgingTime = 0 }, wantErr: true},
 		{name: "invalid stp", mutate: func(d *Device) { d.STP.Protocol = "mstp" }, wantErr: true},
 		{name: "invalid lldp", mutate: func(d *Device) { d.LLDP.TxInterval = 0 }, wantErr: true},
+		{name: "invalid ptp", mutate: func(d *Device) { d.PTP.Mode = "grandmaster" }, wantErr: true},
+		{name: "invalid synce", mutate: func(d *Device) { d.SyncE.Interfaces[0].QL = "" }, wantErr: true},
+		{name: "invalid esmc", mutate: func(d *Device) { d.SyncE.ESMC.TxInterval = 0 }, wantErr: true},
 	}
 
 	for _, tt := range tests {

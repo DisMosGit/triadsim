@@ -54,7 +54,7 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/datatree` | data-tree read and edit engine shared by the NETCONF and RESTCONF codecs | implemented (Phase 4) |
 | `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms | Phase 6 |
 | `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters, storm simulation | implemented (Phase 4) |
-| `internal/sync` | PTP, SyncE, ESMC/SSM, holdover | Phase 5 |
+| `internal/sync` | PTP state machine, SyncE source selection, ESMC/SSM quality levels, holdover, simulated offset/jitter | implemented (Phase 5) |
 | `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) | implemented (Phase 1.8); traps Phase 6 |
 | `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes, confirmed commit | implemented (Phase 2, confirmed commit Phase 3) |
 | `internal/netconf/notif` | RFC 5277 create-subscription, subscription registry and notification dispatch | implemented (Phase 3) |
@@ -100,13 +100,18 @@ synchronization — behind one managed-object model and one management plane.
 
 The other domains are standalone managed-object trees: `vlans/vlan[id=<vid>]`,
 `mac-table` (parameters, `entry[mac-address=<mac>]` and the read-only `current-count`) and
-`lldp` (parameters, `neighbors/neighbor[port=<if>]`) for L2, and `PTPClock`, `SyncEState`,
-`ESMC` and `QL` for synchronization. The STP state hangs off `stp/state`, whose ports are
-`stp/state/ports/port[port=<if>]`. A list that grows at runtime — VLANs, VLAN members, MAC
-entries, LLDP neighbours — is tagged `creatable:"true"`, so the router can synthesise an element
-the boot template does not have; a closed list rejects an unknown instance. Every
-type validates its ranges and enumerations in `Validate()`, and read-only nodes carry
-`config:"false"`, which the router rejects when a management plane tries to write them.
+`lldp` (parameters, `neighbors/neighbor[port=<if>]`) for L2, and `ptp/clock/` and `synce/` for
+synchronization. The PTP clock carries `mode`, `domain`, `priority1`, `priority2`, `clock-class`,
+`clock-accuracy`, `holdover-timeout` and the read-only `state`, `offset` and `jitter`. SyncE carries
+the global `enabled` switch, the read-only `selected-source`/`selected-ql`/`selected-extended-ql`,
+`interfaces/interface[name=<if>]/` (`ssm-enabled`, `ql`, `extended-ql`, `priority`,
+`ptp-preference`) and `esmc/` (`enabled`, `tx-interval`, `extended-codes`). The STP state hangs off
+`stp/state`, whose ports are `stp/state/ports/port[port=<if>]`. A list that grows at runtime —
+VLANs, VLAN members, MAC entries, LLDP neighbours — is tagged `creatable:"true"`, so the router can
+synthesise an element the boot template does not have; a closed list (interfaces, STP ports, SyncE
+interfaces) rejects an unknown instance. Every type validates its ranges and enumerations in
+`Validate()`, and read-only nodes carry `config:"false"`, which the router rejects when a management
+plane tries to write them.
 
 ## Router
 
@@ -119,12 +124,13 @@ come from the schema rather than from a second table.
 paths, and `Bindings` returns every exposed OID with its value in numeric OID order, which is what
 the SNMP agent walks. The OID tables in `router/oid.go` cover the MIB-II system, interface and
 ifXTable counter groups, the BRIDGE-MIB bridge identity, spanning-tree and forwarding-database
-tables, the Q-BRIDGE-MIB VLAN name table and the vendor `1.3.6.1.4.1.99999.1.*` radio objects.
+tables, the Q-BRIDGE-MIB VLAN name table and the vendor `1.3.6.1.4.1.99999.*` objects (the `.1.1.*`
+radio leaves and the `.2.1.*` synchronization clock, SyncE scalars and SyncE interface table).
 Interface columns use the 1-based index of the interface in `Device.Interfaces`; the bridge
-forwarding database is indexed by the six MAC octets, the STP port table by that same interface
-index and the VLAN table by the VLAN identifier. The vendor radio objects are scalar (`.0`)
-because the MVP has one radio link. The tables are applied to the hydrated snapshot, so an entry
-that appeared at runtime gets MIB instances too.
+forwarding database is indexed by the six MAC octets, the STP port table and the SyncE interface
+table by that same interface index and the VLAN table by the VLAN identifier. The vendor radio
+objects are scalar (`.0`) because the MVP has one radio link. The tables are applied to the hydrated
+snapshot, so an entry that appeared at runtime gets MIB instances too.
 
 `Validate` is the `store.Validator`: it applies a candidate snapshot to a deep copy of the model
 template, drops the list entries the snapshot does not mention and runs `Device.Validate()`, so a
@@ -148,10 +154,13 @@ type-driven, so it does not depend on which list instances a datastore holds.
    failure publishes `AlarmRaised`; `internal/sync` turns that into a PTP `StateTransition`, and
    the management planes turn both into traps, notifications and metrics. `internal/l2` publishes
    `StateTransition` for a bridge port and `AlarmRaised`/`AlarmCleared` for a broadcast storm. No
-   domain calls another domain directly.
-5. `internal/l2` additionally runs a periodic loop on the injected clock: it ages the MAC table,
-   applies the STP forward delays and refreshes the LLDP neighbour TTLs every tick (`5 s` by
-   default). `start` runs that loop for the lifetime of the process.
+   domain calls another domain directly. In Phase 5 the PTP transitions are driven explicitly
+   through `sync.Manager.Handle`/`SyncLoss` (the latter from `POST /api/simulate/sync-loss`); the
+   radio → sync subscription arrives in Phase 6.5.
+5. `internal/l2` and `internal/sync` additionally run a periodic loop on the injected clock.
+   L2 ages the MAC table, applies the STP forward delays and refreshes the LLDP neighbour TTLs;
+   sync re-runs the SyncE source selection and refreshes the simulated PTP offset and jitter. Both
+   tick every `5 s` by default and `start` runs the loops for the lifetime of the process.
 
 ## Startup
 
@@ -165,9 +174,11 @@ SIGTERM and runs the cobra command tree. `start` then:
    `model.DefaultDevice` and installs `router.Validate` as the commit validator,
 5. loads the persisted startup; when the running datastore is empty it seeds the default device
    into the candidate and commits it, which writes `startup.json`,
-6. listens on the SNMP, NETCONF and metrics ports, then blocks until the context is cancelled and
-   shuts every plane down. A bind failure is fatal, so a busy port is reported at startup instead
-   of silently degrading the simulator.
+6. builds the L2 and sync domain managers (`internal/l2`, `internal/sync`) around the router and
+   the bus and runs their periodic loops,
+7. listens on the SNMP, NETCONF, RESTCONF and metrics ports, then blocks until the context is
+   cancelled and shuts every plane down. A bind failure is fatal, so a busy port is reported at
+   startup instead of silently degrading the simulator.
 
 See [store.md](store.md), [eventbus.md](eventbus.md) and [config.md](config.md) for the
 contracts behind those steps, and `docs/protocols/` for the per-protocol references.

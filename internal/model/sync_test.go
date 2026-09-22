@@ -35,7 +35,9 @@ func validSyncEState() SyncEState {
 	return SyncEState{
 		Enabled:        true,
 		SelectedSource: "eth0",
+		SelectedQL:     QLPRC,
 		Interfaces:     []SyncEInterface{validSyncEInterface()},
+		ESMC:           validESMC(),
 	}
 }
 
@@ -94,6 +96,9 @@ func TestPTPClockValidate(t *testing.T) {
 		{name: "holdover timeout zero", mutate: func(c *PTPClock) { c.HoldoverTimeout = 0 }, wantErr: true},
 		{name: "holdover timeout one", mutate: func(c *PTPClock) { c.HoldoverTimeout = 1 }},
 		{name: "offset NaN", mutate: func(c *PTPClock) { c.Offset = math.NaN() }, wantErr: true},
+		{name: "jitter zero", mutate: func(c *PTPClock) { c.Jitter = 0 }},
+		{name: "jitter positive", mutate: func(c *PTPClock) { c.Jitter = 12.5 }},
+		{name: "jitter infinity", mutate: func(c *PTPClock) { c.Jitter = math.Inf(1) }, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -159,6 +164,16 @@ func TestSyncEStateValidate(t *testing.T) {
 			s.Interfaces = []SyncEInterface{validSyncEInterface(), validSyncEInterface()}
 		}, wantErr: true},
 		{name: "selected source unknown", mutate: func(s *SyncEState) { s.SelectedSource = "eth9" }, wantErr: true},
+		{name: "empty selection clears quality", mutate: func(s *SyncEState) {
+			s.SelectedSource = ""
+			s.SelectedQL = ""
+			s.SelectedExtendedQL = ""
+		}},
+		{name: "selected quality without source", mutate: func(s *SyncEState) { s.SelectedSource = "" }},
+		{name: "unknown selected quality", mutate: func(s *SyncEState) { s.SelectedQL = "QL-NOPE" }, wantErr: true},
+		{name: "extended selected quality", mutate: func(s *SyncEState) { s.SelectedExtendedQL = ExtendedQLPRTC }},
+		{name: "unknown selected extended quality", mutate: func(s *SyncEState) { s.SelectedExtendedQL = "QL-NOPE" }, wantErr: true},
+		{name: "invalid esmc", mutate: func(s *SyncEState) { s.ESMC.TxInterval = 0 }, wantErr: true},
 		{name: "invalid interface", mutate: func(s *SyncEState) {
 			s.Interfaces = []SyncEInterface{validSyncEInterface()}
 			s.Interfaces[0].QL = ""

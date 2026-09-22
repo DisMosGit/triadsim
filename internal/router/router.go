@@ -214,6 +214,12 @@ func buildObjects(root *model.Device) ([]indexedObject, error) {
 	})...)
 	objects = append(objects, tableObjects(root, scopeMAC, "mac-table/entry[mac-address=", macInstance)...)
 	objects = append(objects, tableObjects(root, scopeVLAN, "vlans/vlan[id=", func(id string) string { return id })...)
+	objects = append(objects, tableObjects(root, scopeSyncE, "synce/interfaces/interface[name=", func(name string) string {
+		if instance := interfaceIndexOf(root, name); instance > 0 {
+			return strconv.Itoa(instance)
+		}
+		return ""
+	})...)
 
 	sort.Slice(objects, func(i, j int) bool { return CompareOID(objects[i].oid, objects[j].oid) < 0 })
 	return objects, nil
@@ -269,6 +275,12 @@ func tableKeys(root *model.Device, kind scope) []string {
 		keys := make([]string, 0, len(root.VLANs))
 		for _, vlan := range root.VLANs {
 			keys = append(keys, strconv.Itoa(int(vlan.ID)))
+		}
+		return keys
+	case scopeSyncE:
+		keys := make([]string, 0, len(root.SyncE.Interfaces))
+		for _, iface := range root.SyncE.Interfaces {
+			keys = append(keys, iface.Name)
 		}
 		return keys
 	default:

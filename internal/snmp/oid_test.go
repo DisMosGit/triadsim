@@ -89,6 +89,7 @@ func TestFromPDU(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "int", pdu: gosnmp.SnmpPDU{Type: gosnmp.Integer, Value: 7}, want: 7},
+		{name: "uint", pdu: gosnmp.SnmpPDU{Type: gosnmp.Gauge32, Value: uint(25)}, want: uint(25)},
 		{name: "uint32", pdu: gosnmp.SnmpPDU{Type: gosnmp.Gauge32, Value: uint32(112)}, want: uint32(112)},
 		{name: "uint64", pdu: gosnmp.SnmpPDU{Type: gosnmp.Counter64, Value: uint64(1) << 40}, want: uint64(1) << 40},
 		{name: "bytes become string", pdu: gosnmp.SnmpPDU{Type: gosnmp.OctetString, Value: []byte("radio0")}, want: "radio0"},

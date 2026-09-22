@@ -155,18 +155,39 @@ TriadSim implements a simplified PTP state machine that models the transitions b
 
 ### 4.2. Transition Events
 
+TriadSim implements the transitions below in `internal/sync/ptp.go`. An event
+whose (from, event) pair is not in the table is a no-op: the clock keeps its
+state and no event is published.
+
 | Event | From | To | Trigger |
 |---|---|---|---|
 | `SourceDetected` | Free-Run | Acquiring | Valid PTP source discovered |
 | `CalibrationComplete` | Acquiring | Locked | Offset within acceptable threshold |
 | `SourceLost` | Locked | Holdover-In-Spec | Announce timeout; no SLAVE port |
-| `HoldoverTimerExpired` | Holdover-In-Spec | Holdover-Out-Of-Spec | `time.AfterFunc` timer |
-| `SourceRestored` | Holdover-* | Locked | Valid PTP source re-acquired |
-| `ManualReset` | Any | Free-Run | CLI/API command |
+| `SourceLost` | Acquiring | Free-Run | The source disappeared before the clock ever locked |
+| `HoldoverTimerExpired` | Holdover-In-Spec | Holdover-Out-Of-Spec | `clock.Clock.AfterFunc` timer |
+| `SourceRestored` | Holdover-In-Spec, Holdover-Out-Of-Spec | Locked | Valid PTP source re-acquired |
+| `ManualReset` | any other state | Free-Run | `sync.Manager.Handle` with `EventReset` |
+
+The state machine is fed through `sync.Manager.Handle(ctx, Event)`; the
+`SourceLost` path that the RESTCONF simulation endpoint uses is
+`sync.Manager.SyncLoss(ctx, port)`. A master clock that is still free-running
+locks itself on the first tick (source detected → calibrate).
 
 ### 4.3. Holdover Timer
 
-The holdover timer is implemented using `time.AfterFunc` with a configurable duration. The default holdover timeout is 300 seconds. During holdover, the simulator maintains the last known offset and gradually introduces drift based on the configured oscillator stability.
+The holdover timer is scheduled on the injected `clock.Clock`
+(`time.AfterFunc` in production, `FakeClock` in tests) for the duration of
+`ptp/clock/holdover-timeout`, which the seed sets to 300 seconds. The timer only
+wakes the domain's `Run` loop, which applies the transition with the domain lock
+held, so a late expiry can never resurrect a holdover that a source restore
+already ended.
+
+During holdover the simulator keeps the offset the clock held when the source
+was lost and adds drift of `100` ns per second (`DefaultDriftPPB`), i.e. one ppb
+is one nanosecond per second; the reported jitter is that accumulated drift. A
+locked clock instead reports noise within ±`DefaultJitterNS` (25 ns) of zero, and
+a free-running clock wanders within ±`DefaultFreerunOffsetNS` (1000 ns).
 
 ---
 
@@ -256,9 +277,11 @@ Extended QL options include `ePRTC`, `eEEC`, `PRTC`, `eEEC`, and `DNU`.
 TriadSim simulates SyncE by:
 
 - Maintaining a **QL state** for each SyncE-capable interface.
-- Propagating QL changes through the EventBus.
-- Exposing QL via SNMP (vendor OIDs) and RESTCONF.
-- Allowing manual QL injection for testing (`POST /api/simulate/synce-ql`).
+- Re-running the source selection on every tick of the injected clock.
+- Writing the selected source and its QL to the read-only state leaves, so they
+  are visible over RESTCONF and SNMP.
+- Allowing manual source loss for testing (`POST /api/simulate/sync-loss`); a
+  manual QL injection endpoint is planned for Phase 6.
 
 ---
 
@@ -268,68 +291,75 @@ TriadSim simulates SyncE by:
 
 ```
 internal/sync/
-├── state.go          # Clock state definitions and transitions
-├── state_machine.go  # StateMachine implementation
-├── holdover.go       # Holdover timer and drift simulation
-├── bmca.go           # BMCA attribute modeling
-├── synce.go          # SyncE/ESMC QL state
-└── ptp.go            # PTP model integration
+├── doc.go      # package overview and scope
+├── manager.go  # Manager: Deps, New, Run, Tick, state IO, holdover timer, offset/jitter
+├── ptp.go      # State, Event, transition table, Handle, SyncLoss
+├── synce.go    # SyncE source selection
+└── esmc.go     # QL/SSM mapping and the simplified ESMC message
 ```
 
-### 8.2. StateMachine Interface
+The manager is wired into `start` next to the L2 domain: it reads configuration
+with `router.Snapshot(running)` and writes operational state with
+`router.SetState` (running + candidate), exactly like `internal/l2`.
+
+### 8.2. Manager API
 
 ```go
-type StateMachine struct {
-    State       ClockState
-    Holdover    time.Duration
-    Offset      float64  // nanoseconds
-    Drift       float64  // ppb
-    EventBus    *event.Bus
-    timer       *time.Timer
+type Deps struct {
+    Router       *router.Router
+    Bus          *event.Bus
+    Clock        clock.Clock
+    TickInterval time.Duration
 }
 
-func (sm *StateMachine) Handle(e Event) ClockState {
-    switch e.Type {
-    case SourceDetected:
-        return sm.transition(Acquiring)
-    case CalibrationComplete:
-        return sm.transition(Locked)
-    case SourceLost:
-        sm.startHoldover()
-        return sm.transition(HoldoverInSpec)
-    case HoldoverTimerExpired:
-        return sm.transition(HoldoverOutOfSpec)
-    case SourceRestored:
-        sm.stopHoldover()
-        return sm.transition(Locked)
-    }
-    return sm.State
-}
+func New(deps Deps) (*Manager, error)
+func (m *Manager) Run(ctx context.Context)                              // periodic work + expiry
+func (m *Manager) Tick(ctx context.Context) error                       // selection + offset/jitter
+func (m *Manager) Handle(ctx context.Context, e Event) (State, error)   // state machine
+func (m *Manager) SyncLoss(ctx context.Context, source string) (State, error)
 ```
+
+`State` is one of `freerun`, `acquiring`, `locked`, `holdover-in-spec` or
+`holdover-out-of-spec`, the G.8275.1 clock-level states the model also accepts.
+`Handle` is the only way to drive the machine; `SyncLoss` is the
+management-plane entry point and validates that a named source is a SyncE
+interface of the device.
 
 ### 8.3. Configuration Model
 
 ```go
 type PTPClock struct {
-    Mode        string  `path:"mode" json:"mode"`           // "master", "slave", "boundary"
-    Domain      uint8   `path:"domain" json:"domain"`       // default 24
-    Priority1   uint8   `path:"priority1" json:"priority1"`
-    ClockClass  uint8   `path:"clock-class" json:"clock-class"`
-    ClockAccuracy uint8 `path:"clock-accuracy" json:"clock-accuracy"`
-    HoldoverTimeout uint32 `path:"holdover-timeout" json:"holdover-timeout"` // seconds
-    State       string  `path:"state" json:"state" config:"false"`
-    Offset      float64 `path:"offset" json:"offset" config:"false"`         // nanoseconds
+    Mode            string  `path:"mode"`             // "master", "slave", "boundary"
+    Domain          uint8   `path:"domain"`           // seeded to 24
+    Priority1       uint8   `path:"priority1"`
+    Priority2       uint8   `path:"priority2"`
+    ClockClass      uint8   `path:"clock-class"`
+    ClockAccuracy   uint8   `path:"clock-accuracy"`
+    HoldoverTimeout uint32  `path:"holdover-timeout"` // seconds, seeded to 300
+    State           string  `path:"state" config:"false"`
+    Offset          float64 `path:"offset" config:"false"` // nanoseconds
+    Jitter          float64 `path:"jitter" config:"false"` // nanoseconds
 }
 ```
 
+The router path is `ptp/clock/...`, the module is `sim-sync`
+(`urn:sim:sync`).
+
 ### 8.4. Event Types
 
-| Event Type | Payload | Consumers |
-|---|---|---|
-| `PTPStateChanged` | `{from, to, reason}` | SNMP trap sender, NETCONF notification, Prometheus |
-| `PTPHoldoverStarted` | `{timeout}` | Prometheus, CLI logger |
-| `PTPHoldoverExpired` | `{}` | SNMP trap sender |
-| `SyncEQLChanged` | `{port, oldQL, newQL}` | SNMP trap sender, RESTCONF subscribers |
+The domain publishes the bus-wide event types from `internal/event`; the
+payload is the generic `Event` (`type`, `resource`, `severity`, `message`,
+`timestamp`). There are no PTP-specific bus types.
+
+| Event Type | Resource | Severity | Consumers |
+|---|---|---|---|
+| `StateTransition` | `ptp/clock` | (empty) | NETCONF notification dispatcher, RESTCONF/SSE, Prometheus (Phase 6) |
+| `AlarmRaised` | `ptp/clock` | `major` | SNMP trap sender (Phase 6), notification dispatcher, Prometheus (Phase 6) |
+| `AlarmCleared` | `ptp/clock` | `cleared` | Same as `AlarmRaised` |
+
+`AlarmRaised` is published when the holdover expires (the clock leaves
+`holdover-in-spec` for `holdover-out-of-spec`); `AlarmCleared` is published when
+a clock in `holdover-out-of-spec` reaches `locked` again.
 
 ---
 
@@ -337,21 +367,35 @@ type PTPClock struct {
 
 ### 9.1. SNMP
 
-TriadSim exposes PTP objects via vendor OIDs and standard RFC 8173 MIB objects where applicable.
+TriadSim exposes the PTP clock through vendor OIDs under
+`1.3.6.1.4.1.99999.2.*`. The clock is a single object, so the scalars end in
+`.0`; the SyncE interface table is indexed by the interface index (radio0=1,
+eth0=2, eth1=3), the same instance the interface and bridge MIB tables use. The
+RFC 8173 `ptpbaseMIB` (`1.3.6.1.2.1.241`) is not implemented.
 
-| OID | Object | Type | Access |
-|---|---|---|---|
-| `1.3.6.1.4.1.99999.2.1.1` | `simSyncPtpState` | Integer | read-only |
-| `1.3.6.1.4.1.99999.2.1.2` | `simSyncPtpOffset` | Float | read-only |
-| `1.3.6.1.4.1.99999.2.1.3` | `simSyncPtpDomain` | Unsigned32 | read-write |
-| `1.3.6.1.4.1.99999.2.1.4` | `simSyncPtpPriority1` | Unsigned32 | read-write |
-| `1.3.6.1.4.1.99999.2.1.5` | `simSyncSyncEQL` | Integer | read-only |
+| OID | Model path | Object | Type | Access |
+|---|---|---|---|---|
+| `1.3.6.1.4.1.99999.2.1.1.0` | `ptp/clock/state` | `simSyncPtpState` | Integer | read-only |
+| `1.3.6.1.4.1.99999.2.1.2.0` | `ptp/clock/offset` | `simSyncPtpOffset` | OpaqueDouble | read-only |
+| `1.3.6.1.4.1.99999.2.1.3.0` | `ptp/clock/domain` | `simSyncPtpDomain` | Gauge32 | read-write |
+| `1.3.6.1.4.1.99999.2.1.4.0` | `ptp/clock/priority1` | `simSyncPtpPriority1` | Gauge32 | read-write |
+| `1.3.6.1.4.1.99999.2.1.5.0` | `synce/selected-ql` | `simSyncSyncEQL` | Integer | read-only |
+| `1.3.6.1.4.1.99999.2.1.6.0` | `synce/selected-extended-ql` | `simSyncSyncEExtendedQL` | Integer | read-only |
+| `1.3.6.1.4.1.99999.2.1.7.1.1.<ifIndex>` | `synce/interfaces/interface[name=…]/ql` | `simSyncSyncEIfQL` | Integer | read-only |
+| `1.3.6.1.4.1.99999.2.1.7.1.2.<ifIndex>` | `synce/interfaces/interface[name=…]/ssm-enabled` | `simSyncSyncEIfSSMEnabled` | Integer | read-only |
+| `1.3.6.1.4.1.99999.2.1.8.0` | `ptp/clock/jitter` | `simSyncPtpJitter` | OpaqueDouble | read-only |
 
-The RFC 8173 MIB defines `ptpbaseMIB` under `1.3.6.1.2.1.241`. TriadSim implements a subset of these objects for interoperability.
+`simSyncPtpState` reports `freerun`(1), `acquiring`(2), `locked`(3),
+`holdover-in-spec`(4) or `holdover-out-of-spec`(5); the quality levels are the
+4-bit Option I SSM codes (`QL-PRC`=2, `QL-SSU-A`=4, `QL-SSU-B`=8, `QL-SEC`=11,
+`QL-DNU`=15) and the extended codes are `QL-PRTC`=0x20, `QL-ePRTC`=0x21,
+`QL-eEEC`=0x22.
 
 ### 9.2. NETCONF
 
-PTP configuration is available under the `sim-sync` YANG module.
+The clock lives under the `sim-sync` module. `ptp/clock/state`, `offset`,
+`jitter` and the SyncE selection are read-only (`config:"false"`), so
+`get-config` never returns them; use RESTCONF with `?content=all`.
 
 ```xml
 <rpc message-id="1" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
@@ -374,38 +418,44 @@ PTP configuration is available under the `sim-sync` YANG module.
 ### 9.3. RESTCONF
 
 ```bash
-# Get PTP clock state
-curl http://localhost:8080/restconf/data/sim-sync:ptp/clock/state
-# {"state":"holdover","offset":12.5}
+# Get the PTP clock (configuration and state).
+curl http://localhost:8080/restconf/data/sim-sync:ptp/clock
+# {"sim-sync:ptp":{"clock":{"domain":24,...,"state":"locked","offset":-12.5,"jitter":12.5}}}
 
-# Configure PTP
+# Get just the state leaf.
+curl http://localhost:8080/restconf/data/sim-sync:ptp/clock/state
+# {"sim-sync:state":"locked"}
+
+# Configure PTP.
 curl -X PATCH http://localhost:8080/restconf/data/sim-sync:ptp/clock \
   -H 'Content-Type: application/yang-data+json' \
-  -d '{"sim-sync:mode":"master","sim-sync:domain":24}'
+  -d '{"sim-sync:clock":{"mode":"master","domain":24}}'
 
-# Inject sync loss
+# Get the selected SyncE source and its quality level.
+curl http://localhost:8080/restconf/data/sim-sync:synce/selected-source
+curl http://localhost:8080/restconf/data/sim-sync:synce/selected-ql
+
+# Inject sync loss -> PTP enters holdover.
 curl -X POST http://localhost:8080/api/simulate/sync-loss \
-  -d '{"port":"eth0"}'
+  -H 'Content-Type: application/json' -d '{"port":"eth0"}'
+# {"port":"eth0","state":"holdover-in-spec","status":"ok"}
 ```
+
+An unknown port in `sync-loss` answers `422 invalid-value`, a missing body
+`400`, a wrong method `405` and a server without the sync domain `501`.
 
 ### 9.4. CLI
 
-```bash
-# Show PTP state
-go run ./cmd/simulator dump --sync
-
-# Inject sync loss
-go run ./cmd/simulator alarm inject --type syncLoss --port eth0
-
-# Force holdover
-go run ./cmd/simulator sync holdover --timeout 60
-```
+The cobra commands (`dump`, `alarm inject`, `sync holdover`) arrive in Phase
+6.6. Until then the domain is driven through RESTCONF or the test suite.
 
 ---
 
 ## 10. Metrics
 
-TriadSim exposes the following Prometheus metrics for PTP and SyncE:
+The Prometheus counters and gauges below are **planned for Phase 6.4** and are
+not exposed yet; Phase 5 publishes the state transitions and holdover alarm on
+the EventBus instead.
 
 | Metric | Type | Description |
 |---|---|---|
