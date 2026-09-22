@@ -278,10 +278,16 @@ Failures are reported as `<rpc-error>` inside the reply:
     <error-type>protocol</error-type>
     <error-tag>invalid-value</error-tag>
     <error-severity>error</error-severity>
-    <error-message>router: validate: interfaces[0]: interface radio0: radio-link: radio-link radio0: tx-power 999.0 out of range -10..30 dBm</error-message>
+    <error-message>interfaces/interface[name=radio0]/radio-link/tx-power: expected a number, got "high"</error-message>
+    <error-path>interfaces/interface[name=radio0]/radio-link/tx-power</error-path>
   </rpc-error>
 </rpc-reply>
 ```
+
+Per-node failures — a read-only write, `data-exists`, `data-missing`, an unparsable value or an
+unknown node below a list entry — carry `error-path` with the router path of the offending node.
+A whole-edit validation failure (an out-of-range value the model rejects, a missing mandatory
+sibling) reports `invalid-value` with the validator's message and no path.
 
 | Situation | `error-type` | `error-tag` |
 |---|---|---|

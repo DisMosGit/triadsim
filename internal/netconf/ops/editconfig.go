@@ -222,7 +222,7 @@ func (w *editWalker) leaf(path string, element *Element, node router.Node, op op
 
 	value, err := parseLeaf(node.Leaf, element.TrimmedText())
 	if err != nil {
-		return InvalidValue("%s: %v", path, err)
+		return newPathError(TypeProtocol, TagInvalidValue, path, "%s: %v", path, err)
 	}
 
 	// Convert enforces the model's read-only access and the leaf's type
@@ -233,9 +233,9 @@ func (w *editWalker) leaf(path string, element *Element, node router.Node, op op
 		case errors.Is(err, router.ErrReadOnly):
 			return AccessDenied(path)
 		case errors.Is(err, router.ErrNotFound):
-			return UnknownElement(element.Name)
+			return newPathError(TypeProtocol, TagUnknownElement, path, "unknown element: %s", element.Name)
 		default:
-			return InvalidValue("%v", err)
+			return newPathError(TypeProtocol, TagInvalidValue, path, "%v", err)
 		}
 	}
 

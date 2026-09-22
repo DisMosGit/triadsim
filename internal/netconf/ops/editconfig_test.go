@@ -333,6 +333,53 @@ func TestEditConfigRejectsUnsupportedOptions(t *testing.T) {
 	}
 }
 
+// TestEditConfigErrorsCarryTheOffendingPath checks the error-path of an
+// <rpc-error>, which the reply renders for per-node failures.
+func TestEditConfigErrorsCarryTheOffendingPath(t *testing.T) {
+	deps := newTestDeps(t)
+	eth0 := `<interfaces><interface><name>eth0</name>`
+	radio := `<interfaces><interface><name>radio0</name><radio-link>`
+	target := `<edit-config><target><candidate/></target><config>`
+
+	tests := []struct {
+		name string
+		body string
+		path string
+	}{
+		{
+			name: "read-only leaf",
+			body: target + radio + `<rssi>1</rssi></radio-link></interface></interfaces></config></edit-config>`,
+			path: rssiPath,
+		},
+		{
+			name: "unparsable value",
+			body: target + eth0 + `<mtu>big</mtu></interface></interfaces></config></edit-config>`,
+			path: mtuPath,
+		},
+		{
+			name: "create on existing data",
+			body: target + eth0 + `<mtu operation="create">1500</mtu></interface></interfaces></config></edit-config>`,
+			path: mtuPath,
+		},
+		{
+			name: "remove of read-only data",
+			body: target + radio + `<rssi operation="remove"/></radio-link></interface></interfaces></config></edit-config>`,
+			path: rssiPath,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := editConfig(t, deps, tt.body)
+
+			require.Error(t, err)
+			opErr := &Error{}
+			require.ErrorAs(t, err, &opErr)
+			assert.Equal(t, tt.path, opErr.Path)
+		})
+	}
+}
+
 func TestEditConfigAcceptsNamespacedOperationAttribute(t *testing.T) {
 	deps := newTestDeps(t)
 

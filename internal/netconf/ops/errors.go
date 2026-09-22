@@ -65,6 +65,14 @@ func newError(errorType, tag, format string, args ...any) *Error {
 	}
 }
 
+// newPathError builds an error that also names the offending model path, which
+// the reply renders as error-path.
+func newPathError(errorType, tag, path, format string, args ...any) *Error {
+	err := newError(errorType, tag, format, args...)
+	err.Path = path
+	return err
+}
+
 // Malformed reports a message the server could not parse.
 func Malformed(format string, args ...any) *Error {
 	return newError(TypeRPC, TagMalformedMessage, format, args...)
@@ -97,17 +105,17 @@ func InvalidValue(format string, args ...any) *Error {
 
 // AccessDenied reports a write to a read-only node.
 func AccessDenied(path string) *Error {
-	return newError(TypeProtocol, TagAccessDenied, "access denied: %s is read-only", path)
+	return newPathError(TypeProtocol, TagAccessDenied, path, "access denied: %s is read-only", path)
 }
 
 // DataExists reports an element that already exists.
 func DataExists(path string) *Error {
-	return newError(TypeProtocol, TagDataExists, "data already exists: %s", path)
+	return newPathError(TypeProtocol, TagDataExists, path, "data already exists: %s", path)
 }
 
 // DataMissing reports an element that does not exist.
 func DataMissing(path string) *Error {
-	return newError(TypeProtocol, TagDataMissing, "data missing: %s", path)
+	return newPathError(TypeProtocol, TagDataMissing, path, "data missing: %s", path)
 }
 
 // NotSupported reports an operation or option the simulator does not implement.
