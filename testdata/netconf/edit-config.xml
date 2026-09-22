@@ -1,0 +1,7 @@
+<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability></capabilities><session-id>7</session-id></hello>]]>]]>
+<rpc message-id="1" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><edit-config><target><candidate/></target><config><interfaces><interface><name>radio0</name><radio-link><tx-power>22.5</tx-power><atpc><target-rsl>-50</target-rsl></atpc><acm><min-profile>2</min-profile></acm></radio-link></interface></interfaces></config></edit-config></rpc>]]>]]>
+<rpc message-id="2" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><commit/></rpc>]]>]]>
+<rpc message-id="3" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-config><source><running/></source><filter><interfaces><interface><name>radio0</name><radio-link><tx-power/><atpc><target-rsl/></atpc><acm><min-profile/></acm></radio-link></interface></interfaces></filter></get-config></rpc>]]>]]>
+<rpc message-id="4" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><edit-config><target><candidate/></target><config><interfaces><interface><name>radio0</name><radio-link><tx-power>999</tx-power></radio-link></interface></interfaces></config></edit-config></rpc>]]>]]>
+<rpc message-id="5" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-config><source><candidate/></source><filter><interfaces><interface><name>radio0</name><radio-link><tx-power/></radio-link></interface></interfaces></filter></get-config></rpc>]]>]]>
+<rpc message-id="6" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><close-session/></rpc>]]>]]>

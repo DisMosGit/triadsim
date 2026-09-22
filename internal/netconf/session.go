@@ -15,13 +15,14 @@ import (
 
 // session is one NETCONF session running on an SSH subsystem channel. Sessions
 // share the store and the router of the server; only the transport and the
-// session-id are per session.
+// session-id are per session. The stream is an ssh.Channel in production and an
+// in-memory transcript in tests.
 type session struct {
-	server  *Server
-	id      uint32
-	channel ssh.Channel
-	reader  *messageReader
-	writer  *messageWriter
+	server *Server
+	id     uint32
+	stream io.ReadWriter
+	reader *messageReader
+	writer *messageWriter
 }
 
 // serveSubsystem runs a NETCONF session on an accepted subsystem channel: the
@@ -29,18 +30,18 @@ type session struct {
 // closes the session or the channel breaks.
 func (s *Server) serveSubsystem(ctx context.Context, channel ssh.Channel) {
 	sess := &session{
-		server:  s,
-		id:      s.nextSessionID(),
-		channel: channel,
+		server: s,
+		id:     s.nextSessionID(),
+		stream: channel,
 	}
 	sess.run(ctx)
 }
 
-// run performs the hello exchange and then reads RPCs until the channel ends.
+// run performs the hello exchange and then reads RPCs until the stream ends.
 func (sess *session) run(ctx context.Context) {
-	buffered := bufio.NewReader(sess.channel)
+	buffered := bufio.NewReader(sess.stream)
 	sess.reader = newMessageReader(buffered, framingEOM)
-	sess.writer = newMessageWriter(sess.channel, framingEOM)
+	sess.writer = newMessageWriter(sess.stream, framingEOM)
 
 	// The server hello always uses end-of-message framing: framing is
 	// negotiated only after both peers have exchanged hellos (RFC 6242 §4.2).
