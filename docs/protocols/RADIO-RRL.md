@@ -282,6 +282,12 @@ Default hysteresis values:
 
 When `acm-mode` is `fixed`, the profile specified by `acm-current-profile` is used regardless of channel conditions. This is equivalent to the `single` coding-modulation mode in RFC 8561.
 
+> **Implemented model (Phase 1.1).** `internal/model/radio.go` addresses ACM profiles by index:
+> `acm/min-profile` and `acm/max-profile` are `uint8` values `1..12` corresponding to the
+> `acm-1`…`acm-12` rows of the table above, and the display name lives in `ModProfile.Name`.
+> `rssi`, `fade-margin` and `capacity` are leaves of `radio-link` (as in §9.2), not members of a
+> `radio-link/performance` container.
+
 ### 5.5. Relationship to RFC 8561
 
 RFC 8561 defines the YANG structure for ACM configuration:

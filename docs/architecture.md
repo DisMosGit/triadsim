@@ -47,9 +47,9 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/config` | YAML configuration, defaults, `Load`, `Validate` | implemented |
 | `internal/log` | `log/slog` JSON logging on stderr | implemented |
 | `internal/event` | typed events and the channel-based bus | implemented |
-| `internal/store` | running/candidate/startup contract | interface only (implementation in 1.5) |
+| `internal/store` | running/candidate/startup, diff/commit/rollback, JSON persistence | implemented (Phase 1.5) |
 | `internal/clock` | injectable clock and `FakeClock` | implemented |
-| `internal/model` | managed-object structs with `path`/`xml`/`json` tags | Phase 1 |
+| `internal/model` | managed-object structs with `path`/`xml`/`json` tags | radio, L2, sync, device (Phases 1.1-1.4) |
 | `internal/router` | path ↔ model, OID ↔ path, RPC dispatch | Phase 1 |
 | `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms | Phase 6 |
 | `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters | Phase 4 |
@@ -71,6 +71,21 @@ synchronization — behind one managed-object model and one management plane.
   `store` and `event`.
 - `internal/cli` and `internal/metrics` may depend on everything.
 - Domain packages never import each other: radio, L2 and sync interact only through events.
+
+## Managed objects
+
+`internal/model` is the runtime schema. Its root is `Device`:
+
+- `system-info/` — `device-id`, `name`, `description`, `contact`, `location` and the read-only `uptime`;
+- `interfaces/interface[name=<if>]/` — `name`, `type` (`radio` or `ethernet`), `enabled`, `mtu`,
+  `mac-address`, the read-only `counters`, and for a radio interface a `radio-link/` subtree with
+  `tx-power`, the read-only `rssi`/`fade-margin`/`capacity`, `link-budget/`, `atpc/`, `acm/` and
+  `modulation-profile/`.
+
+The other domains are standalone managed-object trees: `VLAN`, `MACEntry`, `STPState` and
+`LLDPNeighbor` for L2, and `PTPClock`, `SyncEState`, `ESMC` and `QL` for synchronization. Every
+type validates its ranges and enumerations in `Validate()`, and read-only nodes carry
+`config:"false"`, which the router rejects when a management plane tries to write them.
 
 ## Data flow
 

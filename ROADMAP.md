@@ -150,39 +150,59 @@
 > **Результат фазы:** `snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2` возвращает `radio0`, `eth0`, `eth1`.
 
 ### 1.1. Модели домена radio
-- [ ] `internal/model/radio.go` — `RadioLink`, `ATPC`, `ACM`, `ModProfile` · `M` 🧪
-- [ ] Теги `path`, `xml`, `json`, `config:"false"` для read-only · `S`
-- [ ] `RadioLink.Validate() error` · `M` 🧪
-- [ ] Тесты на границы (`tx-power`, `atpc.min < max`) · `M` 🧪
-- [ ] Коммит: `feat(model): radio link` · `M` 🧪
+- [x] `internal/model/radio.go` — `RadioLink`, `ATPC`, `ACM`, `ModProfile` · `M` 🧪
+- [x] Теги `path`, `xml`, `json`, `config:"false"` для read-only · `S`
+- [x] `RadioLink.Validate() error` · `M` 🧪
+- [x] Тесты на границы (`tx-power`, `atpc.min < max`) · `M` 🧪
+- [x] Коммит: `feat(model): radio link` · `M` 🧪
 
 **DoD:** `Validate()` покрыт тестами на граничные значения.
 
 ### 1.2. Модели домена l2
-- [ ] `internal/model/l2.go` — `VLAN`, `MACEntry`, `STPState`, `LLDPNeighbor`, `Interface` · `M` 🧪
-- [ ] `Validate()` на каждой · `M` 🧪
-- [ ] Коммит: `feat(model): l2` · `M` 🧪
+- [x] `internal/model/l2.go` — `VLAN`, `MACEntry`, `STPState`, `LLDPNeighbor`, `Interface` · `M` 🧪
+- [x] `Validate()` на каждой · `M` 🧪
+- [x] Коммит: `feat(model): l2` · `M` 🧪
 
 ### 1.3. Модели домена sync
-- [ ] `internal/model/sync.go` — `PTPClock`, `SyncEState`, `QL`, `ESMC` · `M` 🧪
-- [ ] `Validate()` на каждой · `M` 🧪
-- [ ] Коммит: `feat(model): sync` · `M` 🧪
+- [x] `internal/model/sync.go` — `PTPClock`, `SyncEState`, `QL`, `ESMC` · `M` 🧪
+- [x] `Validate()` на каждой · `M` 🧪
+- [x] Коммит: `feat(model): sync` · `M` 🧪
 
 ### 1.4. Модель устройства и system-info
-- [ ] `internal/model/device.go` — `Device`, `SystemInfo` (device-id, uptime, interfaces) · `S` 🧪
-- [ ] `SystemInfo.Validate()` · `S` 🧪
-- [ ] Коммит: `feat(model): device + system-info` · `S` 🧪
+- [x] `internal/model/device.go` — `Device`, `SystemInfo` (device-id, uptime, interfaces) · `S` 🧪
+- [x] `SystemInfo.Validate()` · `S` 🧪
+- [x] Коммит: `feat(model): device + system-info` · `S` 🧪
 
 ### 1.5. Store: running/candidate/startup
-- [ ] `internal/store/memory.go` — `map[string]any` под мьютексом · `M` 🧪
-- [ ] `Get(path)`, `Set(path, val)`, `Delete(path)`, `List(prefix)` · `M` 🧪
-- [ ] `internal/store/diff.go` — diff candidate vs running · `M` 🧪
-- [ ] `internal/store/persist.go` — `Save/ Load` через `encoding/json` + `os.WriteFile` · `M` 🧪
-- [ ] `Commit` — валидация + применение + persist, `Rollback` — candidate = running · `M` 🧪
-- [ ] Тесты через `t.TempDir()` · `M` 🧪
-- [ ] Коммит: `feat(store): running/candidate/startup` · `L` 🧪
+- [x] `internal/store/memory.go` — `map[string]any` под мьютексом · `M` 🧪
+- [x] `Get(path)`, `Set(path, val)`, `Delete(path)`, `List(prefix)` · `M` 🧪
+- [x] `internal/store/diff.go` — diff candidate vs running · `M` 🧪
+- [x] `internal/store/persist.go` — `Save/ Load` через `encoding/json` + `os.WriteFile` · `M` 🧪
+- [x] `Commit` — валидация + применение + persist, `Rollback` — candidate = running · `M` 🧪
+- [x] Тесты через `t.TempDir()` · `M` 🧪
+- [x] Коммит: `feat(store): running/candidate/startup` · `L` 🧪
 
 **DoD:** diff, commit, rollback, persist/load покрыты тестами.
+
+> **Отклонения при реализации 1.1–1.5:**
+> - Store-контракт — уже замороженный интерфейс фазы 0 с явным датастором
+>   (`Get(ctx, ds, path)`), а не эскиз этой задачи `Get(path)`. Значения — плоские листья
+>   (`bool`, `int`, `uint32`, `float64`, `string`), не указатели на модели.
+> - Добавлены вложенные модели, которые описывают `docs/protocols/*.md` и требуют фазы 4–6:
+>   `LinkBudget`, `InterfaceCounters`, `VLANPort`, `STPPort`, `SyncEInterface`. Это сделано
+>   сейчас, чтобы не проходить повторно «model + Validate + router + golden + YANG» позже.
+> - Профили ACM адресуются индексом `uint8` 1–12, а не строками `acm-N`: так тривиальны
+>   проверки `min <= max` и границ; отображаемое имя лежит в `ModProfile.Name`.
+> - `rssi`, `fade-margin`, `capacity` — листья `radio-link`, а не контейнер
+>   `radio-link/performance` (как в `.docs/plan.md` и §9.2 RESTCONF).
+> - `SystemInfo` дополнен `name`/`description`/`contact`/`location`, потому что они
+>   отображаются на `sysName`/`sysDescr`/`sysContact`/`sysLocation` в 1.8.
+> - `startup.json` версионирован и хранит тип листа (`{"kind":"uint32","value":1500}`):
+>   обычный JSON превратил бы `int`/`uint32` в `float64` после перезапуска.
+> - Валидация store инжектируется (`Options.Validator`), т.к. `internal/store` не должен
+>   импортировать `internal/model`; реальный валидатор появится в router (1.6).
+> - `validate:"..."`-теги не используются: правила живут в `Validate()` (AGENTS.md).
+
 
 ### 1.6. Router: path ↔ model, OID ↔ path
 - [ ] `internal/router/path.go` — парсер `a/b[c=d]/e` · `M` 🧪

@@ -32,7 +32,13 @@ type Change struct {
     New  any
 }
 
-var ErrNotFound = errors.New("store: path not found")
+var (
+    ErrNotFound         = errors.New("store: path not found")
+    ErrUnknownDatastore = errors.New("store: unknown datastore")
+    ErrInvalidPath      = errors.New("store: invalid path")
+    ErrInvalidValue     = errors.New("store: unsupported value type")
+    ErrValidation       = errors.New("store: candidate validation failed")
+)
 
 type Store interface {
     Get(ctx context.Context, ds Datastore, path string) (any, error)
@@ -46,20 +52,35 @@ type Store interface {
 ```
 
 Paths are router paths, for example
-`interfaces/interface[name=radio0]/radio-link/tx-power`. `List` returns the paths below a prefix
-in lexicographic order; `Get` and `Delete` return `ErrNotFound` for a path that is absent from
-the addressed datastore. Values are the managed-object leaves (`int`, `uint32`, `float64`,
-`bool`, `string`), so the store stays independent of the model types.
+`interfaces/interface[name=radio0]/radio-link/tx-power`. `Get` and `Delete` return `ErrNotFound`
+for a path that is absent from the addressed datastore. Values are the managed-object leaves
+(`int`, `uint32`, `float64`, `bool`, `string`), so the store stays independent of the model
+types; `Set` rejects any other Go type with `ErrInvalidValue` and any path that is empty, has a
+leading or trailing slash, or contains an empty segment with `ErrInvalidPath`.
+
+`List` returns the paths **strictly below** a prefix in lexicographic order. `List(ctx, ds, "")`
+lists the whole datastore. The prefix itself is never included, because the store holds leaves
+only, so `List(..., "a")` returns `a/1` but not `a`, and `List(..., "a/1")` returns nothing. The
+result is a fresh slice, so callers may keep it without aliasing the store.
 
 ## Diff, commit and rollback
 
 - `Diff` compares candidate with running and reports one `Change` per path: `create` when the
   path exists only in candidate, `update` when the value differs, `delete` when it exists only
-  in running.
+  in running. Changes are ordered lexicographically by path.
 - `Commit` validates the candidate (model `Validate()` rules), applies it to running and
-  persists the new running configuration as startup. A validation failure aborts the commit and
-  leaves running untouched.
+  persists the new running configuration as startup. Candidate is authoritative: running becomes
+  a copy of the candidate. The startup file is written **before** running is swapped, so a
+  rejected candidate or a failed write leaves every datastore untouched. A validation failure is
+  wrapped with `ErrValidation` so NETCONF can map it to `invalid-value`.
 - `Rollback` discards every candidate change by copying running back into candidate.
+
+Validation is injected, because the store has no schema knowledge: `NewMemory(Options{Validator:
+v})` takes a `Validator func(ctx context.Context, values map[string]any) error`. It receives a
+copy of the candidate's flat path → leaf map, so it cannot mutate the store, and `Commit` holds
+the store lock while calling it — the snapshot exists so the validator never calls back into the
+same `Memory`. A nil `Validator` accepts every candidate; the router wires the real one in
+Phase 1.6.
 
 NETCONF `commit` and RESTCONF write operations use this sequence; `discard-changes` is
 `Rollback`.
@@ -77,8 +98,29 @@ before it reaches the store — the store itself has no schema knowledge.
 listed in `.gitignore` because it is runtime state. Persistence uses `encoding/json` and
 `os.WriteFile` only — no database.
 
+The document is versioned and every leaf carries its Go type, because plain JSON would decode
+every number as `float64` and silently change the type of an `int` or `uint32` leaf across a
+restart:
+
+```json
+{
+  "version": 1,
+  "values": {
+    "interfaces/interface[name=radio0]/enabled": { "kind": "bool", "value": true },
+    "interfaces/interface[name=radio0]/radio-link/tx-power": { "kind": "float64", "value": 20.5 }
+  }
+}
+```
+
+`Load` accepts only version `1` and the five kinds (`bool`, `int`, `uint32`, `float64`,
+`string`); malformed JSON, another version or an unknown kind is an error. A **missing** file is
+not an error: it yields an empty map, because the first boot has no startup file yet.
+`(*Memory).LoadStartup` loads the configured file into running, candidate and startup and is a
+no-op when persistence is disabled or the file does not exist.
+
 ## Status
 
-Phase 0 freezes the interface and this contract. The in-memory implementation
-(`internal/store/memory.go`), diff, commit and JSON persistence land in Phase 1.5; the datastore
-paths become reachable from SNMP, NETCONF and RESTCONF in the phases that follow.
+The in-memory implementation is complete: `internal/store/memory.go` (the three datastores),
+`diff.go` (`diffValues`) and `persist.go` (`Save`/`Load`). The store is not yet wired into
+`start`; the router connects the datastore paths to SNMP, NETCONF and RESTCONF in the phases
+that follow.

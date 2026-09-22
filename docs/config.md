@@ -70,6 +70,11 @@ value, are errors as well; an empty (or comments-only) file is valid and yields 
 there and loads it at boot (see [store.md](store.md)). The file is listed in `.gitignore` together
 with `configs/local*.yaml`.
 
+The document is versioned (`version: 1`) and each leaf stores its Go type next to the value, so an
+`int` or `uint32` leaf does not turn into a `float64` after a restart; see the format and the
+accepted kinds in [store.md](store.md#persistence). A missing file is not an error — the first
+boot simply starts from the built-in seed.
+
 ## Notes
 
 The configuration is intentionally flat, matching the field list in

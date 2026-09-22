@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/log`: `log/slog` JSON logging to stderr with level parsing and `Debug`/`Info`/`Warn`/`Error` helpers.
 - `internal/event`: channel-based `EventBus` with `AlarmRaised`, `AlarmCleared`, `ConfigChanged` and `StateTransition` events.
 - `internal/store`: `Store` interface for the running/candidate/startup datastores.
+- `internal/model`: managed objects for the radio link (`RadioLink`, `ATPC`, `ACM`, `ModProfile`, `LinkBudget`), L2 (`Interface`, `InterfaceCounters`, `VLAN`, `MACEntry`, `STPState`, `LLDPNeighbor`), synchronization (`PTPClock`, `SyncEState`, `QL`, `ESMC`) and the device (`Device`, `SystemInfo`), each with `Validate()` and `path`/`xml`/`json` tags.
+- `internal/store`: in-memory `Memory` implementation of running/candidate/startup with `Diff`, `Commit` (injected `Validator`, atomic apply and persist), `Rollback` and `LoadStartup`, plus the versioned JSON `Save`/`Load` used for `startup.json`.
 - `internal/clock`: injectable `Clock`/`Timer` interfaces with `RealClock` and `FakeClock` test implementation.
 - `cmd/simulator` cobra entrypoint with the `start` command that loads config, sets up logging and runs the EventBus.
 - Tooling: `scripts/check.sh`, `scripts/demo.sh` (stub) and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
@@ -23,4 +25,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Management planes (SNMP v2c, NETCONF, RESTCONF, optional gNMI) and the radio/L2/sync domains land in Phases 1–7; see [ROADMAP.md](ROADMAP.md).
+- Management planes (SNMP v2c, NETCONF, RESTCONF, optional gNMI) and the router land in Phases 1.6–7; the managed-object models (Phase 1.1–1.4) and the store implementation (Phase 1.5) are in place. See [ROADMAP.md](ROADMAP.md).

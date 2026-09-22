@@ -12,9 +12,10 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 0 — skeleton.** The repository builds, tests and starts, and the
-> configuration/logging/EventBus/store/clock foundations exist. Management planes and domain
-> logic land in Phases 1–7; see [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 1 — model + store.** The repository builds, tests and starts; the
+> configuration/logging/EventBus/clock foundations plus the managed-object models (radio, L2,
+> sync, device) and the in-memory running/candidate/startup store are in place. The router, SNMP
+> agent and later domain logic land in Phases 1.6–7; see [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 
