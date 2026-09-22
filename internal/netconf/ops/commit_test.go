@@ -95,11 +95,14 @@ func TestCommitAcceptsCandidateSourceAndRejectsTheRest(t *testing.T) {
 	}{
 		{name: "running source", body: `<commit><source><running/></source></commit>`, tag: TagOperationNotSupported},
 		{name: "startup source", body: `<commit><source><startup/></source></commit>`, tag: TagOperationNotSupported},
-		{name: "confirmed", body: `<commit><confirmed/></commit>`, tag: TagOperationNotSupported},
-		{name: "confirm-timeout", body: `<commit><confirm-timeout>30</confirm-timeout></commit>`, tag: TagOperationNotSupported},
 		{name: "persist", body: `<commit><persist>token</persist></commit>`, tag: TagOperationNotSupported},
 		{name: "persist-id", body: `<commit><persist-id>token</persist-id></commit>`, tag: TagOperationNotSupported},
+		{name: "confirmed with persist", body: `<commit><confirmed/><persist>token</persist></commit>`, tag: TagOperationNotSupported},
 		{name: "unknown source", body: `<commit><source><operational/></source></commit>`, tag: TagUnknownElement},
+		{name: "confirm-timeout without confirmed", body: `<commit><confirm-timeout>30</confirm-timeout></commit>`, tag: TagMissingElement},
+		{name: "zero confirm-timeout", body: `<commit><confirmed/><confirm-timeout>0</confirm-timeout></commit>`, tag: TagInvalidValue},
+		{name: "negative confirm-timeout", body: `<commit><confirmed/><confirm-timeout>-1</confirm-timeout></commit>`, tag: TagInvalidValue},
+		{name: "non-numeric confirm-timeout", body: `<commit><confirmed/><confirm-timeout>soon</confirm-timeout></commit>`, tag: TagInvalidValue},
 	}
 
 	for _, tt := range tests {

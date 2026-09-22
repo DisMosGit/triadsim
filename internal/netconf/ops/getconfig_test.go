@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DisMosGit/triadsim/internal/clock"
 	"github.com/DisMosGit/triadsim/internal/model"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
@@ -38,7 +39,13 @@ func newTestDepsWithFile(t *testing.T) (Deps, string) {
 	require.NoError(t, r.Seed(ctx, store.Candidate))
 	require.NoError(t, st.Commit(ctx))
 
-	return Deps{Router: r, Store: st}, startupFile
+	deps := Deps{
+		Router:    r,
+		Store:     st,
+		SessionID: 1,
+		Confirmed: NewConfirmed(clock.NewFakeClock()),
+	}
+	return deps, startupFile
 }
 
 // parseOperation parses one operation element from its XML text.

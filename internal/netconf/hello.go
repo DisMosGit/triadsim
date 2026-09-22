@@ -19,17 +19,25 @@ const (
 	CapabilityCandidate = "urn:ietf:params:netconf:capability:candidate:1.0"
 	// CapabilityWritableRunning allows edit-config to target running directly.
 	CapabilityWritableRunning = "urn:ietf:params:netconf:capability:writable-running:1.0"
+	// CapabilityConfirmedCommit adds <confirmed/> and <confirm-timeout> to
+	// commit (RFC 4741 §8.4.3). Version 1.1 would also add <persist>,
+	// <persist-id> and <cancel-commit>, which the simulator does not implement.
+	CapabilityConfirmedCommit = "urn:ietf:params:netconf:capability:confirmed-commit:1.0"
+	// CapabilityNotification adds create-subscription and event notifications
+	// (RFC 5277 §3.1.1).
+	CapabilityNotification = "urn:ietf:params:netconf:capability:notification:1.0"
 )
 
 // Capabilities returns the capabilities the server advertises, in a stable
-// order. The server only advertises what it implements: confirmed-commit and
-// notifications are added with their implementation.
+// order. The server only advertises what it implements.
 func Capabilities() []string {
 	return []string{
 		CapabilityBase11,
 		CapabilityBase10,
 		CapabilityCandidate,
 		CapabilityWritableRunning,
+		CapabilityConfirmedCommit,
+		CapabilityNotification,
 	}
 }
 

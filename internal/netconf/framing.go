@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync"
 )
 
 // framingMode is one of the two NETCONF over SSH framing mechanisms (RFC 6242).
@@ -200,7 +201,13 @@ func detectFraming(reader *bufio.Reader) (framingMode, error) {
 }
 
 // messageWriter writes NETCONF messages to a stream using one framing mode.
+//
+// One writer serves the whole session: the RPC loop writes <rpc-reply>
+// documents while the notification dispatcher writes <notification> documents
+// from another goroutine, so the mutex keeps every message framed by exactly one
+// Write call and never interleaved with another.
 type messageWriter struct {
+	mu     sync.Mutex
 	writer io.Writer
 	mode   framingMode
 }
@@ -211,11 +218,19 @@ func newMessageWriter(w io.Writer, mode framingMode) *messageWriter {
 }
 
 // SetMode switches the framing mode for subsequent messages.
-func (w *messageWriter) SetMode(mode framingMode) { w.mode = mode }
+func (w *messageWriter) SetMode(mode framingMode) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.mode = mode
+}
 
 // WriteMessage writes one message with its framing. Each message is written
-// with one Write call.
+// with one Write call; concurrent writers are serialized.
 func (w *messageWriter) WriteMessage(message []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.mode == framingEOM {
 		framed := make([]byte, 0, len(message)+len(endOfMessage))
 		framed = append(framed, message...)

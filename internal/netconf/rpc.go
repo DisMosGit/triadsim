@@ -142,6 +142,12 @@ func (sess *session) dispatch(ctx context.Context, rpc incomingRPC) (rpcReply, b
 		}
 		return okReply(rpc.MessageID), false
 
+	case "create-subscription":
+		if err := sess.subscribe(ctx, operation); err != nil {
+			return errorReplyFrom(rpc.MessageID, err), false
+		}
+		return okReply(rpc.MessageID), false
+
 	case "close-session":
 		return okReply(rpc.MessageID), true
 

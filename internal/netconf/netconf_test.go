@@ -37,7 +37,16 @@ func newTestStore(t *testing.T) (*router.Router, *store.Memory) {
 func startTestServer(t *testing.T, r *router.Router, st store.Store, bus *event.Bus) *Server {
 	t.Helper()
 
-	srv := New(r, st, bus, Options{Addr: "127.0.0.1:0"})
+	return startTestServerOptions(t, r, st, bus, Options{})
+}
+
+// startTestServerOptions is startTestServer with explicit options, so a test
+// can inject a clock.
+func startTestServerOptions(t *testing.T, r *router.Router, st store.Store, bus *event.Bus, opts Options) *Server {
+	t.Helper()
+
+	opts.Addr = "127.0.0.1:0"
+	srv := New(r, st, bus, opts)
 	require.NoError(t, srv.Listen())
 
 	ctx, cancel := context.WithCancel(context.Background())

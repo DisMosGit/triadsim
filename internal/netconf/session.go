@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/DisMosGit/triadsim/internal/netconf/notif"
 	"github.com/DisMosGit/triadsim/internal/netconf/ops"
 )
 
@@ -34,7 +35,25 @@ func (s *Server) serveSubsystem(ctx context.Context, channel ssh.Channel) {
 		id:     s.nextSessionID(),
 		stream: channel,
 	}
+	defer s.sessionEnded(ctx, sess)
+
 	sess.run(ctx)
+}
+
+// sessionEnded releases what one session held: its notification subscription
+// (RFC 5277 §2.3) and, when it issued a confirmed commit that never got a
+// confirming commit, the rollback of that commit (RFC 4741 §8.4.1).
+func (s *Server) sessionEnded(ctx context.Context, sess *session) {
+	if s.dispatcher != nil {
+		s.dispatcher.Unsubscribe(sess.id)
+	}
+
+	// SessionEnded keeps the context values but ignores its cancellation, so
+	// the rollback still runs while the server is shutting down.
+	if err := s.confirmed.SessionEnded(ctx, sess.id); err != nil {
+		slog.ErrorContext(ctx, "netconf: confirmed-commit rollback failed",
+			"session_id", sess.id, "error", err)
+	}
 }
 
 // run performs the hello exchange and then reads RPCs until the stream ends.
@@ -118,8 +137,41 @@ func (sess *session) reportReadError(ctx context.Context, err error) {
 // deps returns what the operations need from the server.
 func (sess *session) deps() ops.Deps {
 	return ops.Deps{
-		Router: sess.server.router,
-		Store:  sess.server.store,
-		Bus:    sess.server.bus,
+		Router:    sess.server.router,
+		Store:     sess.server.store,
+		Bus:       sess.server.bus,
+		SessionID: sess.id,
+		Confirmed: sess.server.confirmed,
 	}
+}
+
+// subscribe registers the session for one notification stream (RFC 5277). A
+// second <create-subscription> replaces the previous subscription, and the
+// subscription ends with the session.
+func (sess *session) subscribe(ctx context.Context, operation *ops.Element) error {
+	if sess.server.dispatcher == nil {
+		return ops.NotSupported("notifications are disabled")
+	}
+
+	request, opErr := notif.ParseRequest(operation)
+	if opErr != nil {
+		return opErr
+	}
+	if err := sess.server.dispatcher.Subscribe(sess.id, request.Stream, sess.writeNotification); err != nil {
+		if errors.Is(err, notif.ErrUnknownStream) {
+			return ops.InvalidValue("%v", err)
+		}
+		return ops.Failed(err)
+	}
+
+	slog.DebugContext(ctx, "netconf: notification subscription created",
+		"session_id", sess.id, "stream", request.Stream)
+	return nil
+}
+
+// writeNotification writes one notification document to the session stream. It
+// is the notif.Sender the dispatcher holds for this session; the message writer
+// adds the negotiated framing.
+func (sess *session) writeNotification(data []byte) error {
+	return sess.writer.WriteMessage(data)
 }

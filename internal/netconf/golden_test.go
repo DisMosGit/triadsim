@@ -52,10 +52,11 @@ func playSession(t *testing.T, input []byte) []byte {
 }
 
 // TestGoldenTranscripts compares the server's answers with the recorded golden
-// files: the hello exchange, edit-config, commit and get-config in one, and the
-// get-config filter and error cases in the other.
+// files: the hello exchange, edit-config, commit and get-config in one, the
+// get-config filter and error cases in the other, and the confirmed-commit
+// dialog in the third.
 func TestGoldenTranscripts(t *testing.T) {
-	for _, name := range []string{"edit-config", "get-config"} {
+	for _, name := range []string{"edit-config", "get-config", "confirmed-commit"} {
 		t.Run(name, func(t *testing.T) {
 			input := readGolden(t, name+".xml")
 			got := playSession(t, input)

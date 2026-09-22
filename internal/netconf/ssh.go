@@ -13,7 +13,10 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/DisMosGit/triadsim/internal/clock"
 	"github.com/DisMosGit/triadsim/internal/event"
+	"github.com/DisMosGit/triadsim/internal/netconf/notif"
+	"github.com/DisMosGit/triadsim/internal/netconf/ops"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
 )
@@ -32,6 +35,9 @@ type Options struct {
 	// ephemeral ed25519 key, which is enough for a simulator: the key is not
 	// persisted, so clients need to accept a new host key after a restart.
 	HostKey ssh.Signer
+	// Clock schedules the confirmed-commit rollback. A nil Clock means
+	// clock.RealClock{}; tests inject a FakeClock to drive the timeout.
+	Clock clock.Clock
 }
 
 // subsystemRequest is the payload of an SSH "subsystem" request (RFC 4254 §6.5).
@@ -43,10 +49,12 @@ type subsystemRequest struct {
 // per connection; each SSH session that requests the netconf subsystem runs its
 // own NETCONF session with its own session-id over the same store.
 type Server struct {
-	router *router.Router
-	store  store.Store
-	bus    *event.Bus
-	opts   Options
+	router     *router.Router
+	store      store.Store
+	bus        *event.Bus
+	confirmed  *ops.Confirmed
+	dispatcher *notif.Dispatcher
+	opts       Options
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -59,18 +67,24 @@ type Server struct {
 }
 
 // New returns a server for r, st and bus. bus may be nil, which only disables
-// ConfigChanged publication. Call Listen before Serve.
+// ConfigChanged publication and <create-subscription>. Call Listen before Serve.
 func New(r *router.Router, st store.Store, bus *event.Bus, opts Options) *Server {
 	if opts.Addr == "" {
 		opts.Addr = fmt.Sprintf(":%d", opts.Port)
 	}
-	return &Server{
-		router: r,
-		store:  st,
-		bus:    bus,
-		opts:   opts,
-		conns:  make(map[net.Conn]struct{}),
+
+	server := &Server{
+		router:    r,
+		store:     st,
+		bus:       bus,
+		confirmed: ops.NewConfirmed(opts.Clock),
+		opts:      opts,
+		conns:     make(map[net.Conn]struct{}),
 	}
+	if bus != nil {
+		server.dispatcher = notif.NewDispatcher(bus)
+	}
+	return server
 }
 
 // Listen builds the SSH server configuration and binds the TCP socket. It is
@@ -156,6 +170,13 @@ func (s *Server) Close() error {
 	for conn := range s.conns {
 		_ = conn.Close()
 	}
+
+	// The sessions revert their own confirmed commit as they end, so closing
+	// the connections above is what releases a pending rollback; the dispatcher
+	// has no such hook and is stopped here.
+	if s.dispatcher != nil {
+		s.dispatcher.Close()
+	}
 	return err
 }
 
@@ -176,6 +197,14 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}()
 
+	if s.dispatcher != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.dispatcher.Run(ctx)
+		}()
+	}
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -192,6 +221,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 
 	s.wg.Wait()
+
+	// Every session has ended and reverted its own confirmed commit by now, so
+	// only a timer that outlived its session can still be pending.
+	s.confirmed.Close()
 	return nil
 }
 

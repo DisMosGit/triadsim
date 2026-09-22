@@ -108,6 +108,13 @@ func AccessDenied(path string) *Error {
 	return newPathError(TypeProtocol, TagAccessDenied, path, "access denied: %s is read-only", path)
 }
 
+// Denied reports an operation the caller may not perform, for example a
+// confirmed commit while another session owns the confirmed commit in
+// progress. Unlike AccessDenied it names no model path.
+func Denied(format string, args ...any) *Error {
+	return newError(TypeProtocol, TagAccessDenied, format, args...)
+}
+
 // DataExists reports an element that already exists.
 func DataExists(path string) *Error {
 	return newPathError(TypeProtocol, TagDataExists, path, "data already exists: %s", path)

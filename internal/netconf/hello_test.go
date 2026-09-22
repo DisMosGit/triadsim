@@ -16,6 +16,8 @@ func TestCapabilitiesOnlyAdvertiseImplementedFeatures(t *testing.T) {
 		CapabilityBase10,
 		CapabilityCandidate,
 		CapabilityWritableRunning,
+		CapabilityConfirmedCommit,
+		CapabilityNotification,
 	}, capabilities)
 
 	seen := make(map[string]struct{}, len(capabilities))
