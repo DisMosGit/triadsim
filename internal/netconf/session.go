@@ -9,6 +9,8 @@ import (
 	"log/slog"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/DisMosGit/triadsim/internal/netconf/ops"
 )
 
 // session is one NETCONF session running on an SSH subsystem channel. Sessions
@@ -92,13 +94,17 @@ func (sess *session) run(ctx context.Context) {
 			}
 			return
 		}
-		sess.handleMessage(ctx, bytes.TrimSpace(message))
+		if !sess.handleMessage(ctx, bytes.TrimSpace(message)) {
+			return
+		}
 	}
 }
 
-// handleMessage processes one message. RPC decoding, dispatch and replies arrive
-// with the next step of the phase; until then a framed message is only
-// acknowledged in the debug log, which keeps the framing testable on its own.
-func (sess *session) handleMessage(ctx context.Context, message []byte) {
-	slog.DebugContext(ctx, "netconf: message received", "session_id", sess.id, "bytes", len(message))
+// deps returns what the operations need from the server.
+func (sess *session) deps() ops.Deps {
+	return ops.Deps{
+		Router: sess.server.router,
+		Store:  sess.server.store,
+		Bus:    sess.server.bus,
+	}
 }
