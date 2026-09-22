@@ -72,6 +72,9 @@ type Manager struct {
 	bus          *event.Bus
 	clock        clock.Clock
 	tickInterval time.Duration
+	// events is the bus subscription Run drains. Subscribing in New keeps an
+	// alarm that fires before Run starts from being lost.
+	events <-chan event.Event
 
 	// mu serialises the read-modify-write cycles of Run, Handle and SyncLoss.
 	mu stdsync.Mutex
@@ -108,9 +111,20 @@ func New(deps Deps) (*Manager, error) {
 		bus:          deps.Bus,
 		clock:        deps.Clock,
 		tickInterval: deps.TickInterval,
+		events:       subscribe(deps.Bus),
 		expired:      make(chan struct{}, 1),
 		rng:          rand.New(rand.NewSource(rngSeed)),
 	}, nil
+}
+
+// subscribe takes the bus subscription of a bus that exists, so the manager
+// sees radio alarms from the moment it is built, not from the moment Run
+// starts.
+func subscribe(bus *event.Bus) <-chan event.Event {
+	if bus == nil {
+		return nil
+	}
+	return bus.Subscribe()
 }
 
 // Clock exposes the manager's time source, which the periodic work and the
@@ -121,7 +135,13 @@ func (m *Manager) Clock() clock.Clock { return m.clock }
 // runs immediately, so a restart adopts the persisted clock state without
 // waiting for a period. Every period is scheduled on the injected clock, so
 // tests drive it with FakeClock and never sleep.
+//
+// Run also drains the bus subscription New took: a radio link that goes down
+// takes the clock's reference with it, and a restored link brings it back.
 func (m *Manager) Run(ctx context.Context) {
+	if m.bus != nil {
+		defer m.bus.Unsubscribe(m.events)
+	}
 	if err := m.Tick(ctx); err != nil {
 		slog.WarnContext(ctx, "sync: initial tick failed", "error", err)
 	}
@@ -150,6 +170,15 @@ func (m *Manager) Run(ctx context.Context) {
 		case <-m.expired:
 			if err := m.expireHoldover(ctx); err != nil {
 				slog.WarnContext(ctx, "sync: holdover expiry failed", "error", err)
+			}
+		case e, ok := <-m.events:
+			if !ok {
+				timer.Stop()
+				return
+			}
+			if err := m.handleDomainEvent(ctx, e); err != nil {
+				slog.WarnContext(ctx, "sync: handling a domain event failed",
+					"error", err, "type", e.Type, "alarm", e.Alarm, "resource", e.Resource)
 			}
 		}
 	}

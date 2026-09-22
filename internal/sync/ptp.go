@@ -142,6 +142,27 @@ func (m *Manager) SyncLoss(ctx context.Context, source string) (State, error) {
 	return m.handleLocked(ctx, Event{Type: EventSourceLost, Reason: reason})
 }
 
+// handleDomainEvent reacts to the events another domain publishes. The sync
+// domain never imports them: the alarm names are the contract, and a radio link
+// that goes down is a lost reference while a restored link brings it back.
+func (m *Manager) handleDomainEvent(ctx context.Context, e event.Event) error {
+	var transition Event
+	switch {
+	case e.Type == event.TypeAlarmRaised && e.Alarm == event.AlarmRadioLinkDown:
+		transition = Event{Type: EventSourceLost, Reason: "radio link " + e.Resource + " down"}
+	case e.Type == event.TypeAlarmCleared && e.Alarm == event.AlarmRadioLinkDown:
+		transition = Event{Type: EventSourceRestored, Reason: "radio link " + e.Resource + " restored"}
+	default:
+		return nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, err := m.handleLocked(ctx, transition)
+	return err
+}
+
 // handleLocked is the state machine proper. The caller must hold the domain
 // lock.
 func (m *Manager) handleLocked(ctx context.Context, e Event) (State, error) {

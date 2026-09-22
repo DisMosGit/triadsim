@@ -72,6 +72,9 @@ type TrapSender struct {
 	dest      string
 
 	conn net.Conn
+	// events is the bus subscription Run drains. Subscribing in New keeps an
+	// alarm that fires before Run starts from being lost.
+	events <-chan event.Event
 	// requests numbers the trap PDUs the sender emits. A trap carries no
 	// request to correlate with, but RFC 3416 requires the field.
 	requests atomic.Uint32
@@ -100,7 +103,17 @@ func NewTrapSender(opts TrapOptions) *TrapSender {
 		start:     opts.Clock.Now(),
 		community: opts.Community,
 		dest:      dest,
+		events:    subscribeBus(opts.Bus),
 	}
+}
+
+// subscribeBus takes the bus subscription of a bus that exists, so an alarm
+// that fires before Run starts is not lost.
+func subscribeBus(bus *event.Bus) <-chan event.Event {
+	if bus == nil {
+		return nil
+	}
+	return bus.Subscribe()
 }
 
 // Listen resolves the destination and opens the sending socket, so a bad
@@ -134,14 +147,13 @@ func (s *TrapSender) Run(ctx context.Context) {
 	if s.bus == nil {
 		return
 	}
-	events := s.bus.Subscribe()
-	defer s.bus.Unsubscribe(events)
+	defer s.bus.Unsubscribe(s.events)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case e, ok := <-events:
+		case e, ok := <-s.events:
 			if !ok {
 				return
 			}

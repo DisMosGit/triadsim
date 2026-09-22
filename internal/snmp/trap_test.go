@@ -43,17 +43,6 @@ func (r *trapReceiver) receive(t *testing.T) *gosnmp.SnmpPacket {
 	return decodeTrap(t, buf[:n])
 }
 
-// read returns the next datagram within a short window, or nil.
-func (r *trapReceiver) read() []byte {
-	buf := make([]byte, 65535)
-	_ = r.conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
-	n, _, err := r.conn.ReadFrom(buf)
-	if err != nil {
-		return nil
-	}
-	return append([]byte(nil), buf[:n]...)
-}
-
 // decodeTrap decodes one trap datagram.
 func decodeTrap(t *testing.T, data []byte) *gosnmp.SnmpPacket {
 	t.Helper()
@@ -291,22 +280,17 @@ func TestRunForwardsBusEvents(t *testing.T) {
 	defer cancel()
 	go f.sender.Run(ctx)
 
-	// Run subscribes inside the goroutine, so events are republished until the
-	// subscription exists and the trap arrives.
-	var data []byte
-	require.Eventually(t, func() bool {
-		bus.Publish(event.Event{
-			Type:     event.TypeAlarmRaised,
-			Resource: "radio0",
-			Severity: "critical",
-			Domain:   event.DomainRadio,
-			Alarm:    event.AlarmRadioLinkDown,
-		})
-		data = f.receiver.read()
-		return data != nil
-	}, 5*time.Second, 10*time.Millisecond)
+	// New takes the subscription, so the event is queued even before Run drains
+	// it.
+	bus.Publish(event.Event{
+		Type:     event.TypeAlarmRaised,
+		Resource: "radio0",
+		Severity: "critical",
+		Domain:   event.DomainRadio,
+		Alarm:    event.AlarmRadioLinkDown,
+	})
 
-	assert.Equal(t, TrapRadioLinkDown, trapOID(t, decodeTrap(t, data)))
+	assert.Equal(t, TrapRadioLinkDown, trapOID(t, f.receiver.receive(t)))
 }
 
 // A sender without a bus has nothing to run.
