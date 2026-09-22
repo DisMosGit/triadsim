@@ -45,94 +45,102 @@
 > **Результат фазы:** `go run ./cmd/simulator start` поднимается, `go test ./...` зелёный.
 
 ### 0.1. Инициализация репозитория
-- [ ] `git init`, `.gitignore` (Go, IDE, `*.test`, `bin/`, `.env`, `startup.json`) · `S`
-- [ ] `LICENSE.md` (MIT) · `S` 📝
-- [ ] `README.md` (обзор + быстрый старт + один `curl` демо) · `S` 📝
-- [ ] `CONTRIBUTING.md` · `S` 📝
-- [ ] `CHANGELOG.md` (Keep a Changelog) · `S` 📝
-- [ ] `AGENTS.md` — единый файл для агентных IDE · `S` 📝
-- [ ] Первый коммит: `chore: initial skeleton` · `S`
+- [x] `git init`, `.gitignore` (Go, IDE, `*.test`, `bin/`, `.env`, `startup.json`) · `S`
+- [x] `LICENSE.md` (MIT) · `S` 📝
+- [x] `README.md` (обзор + быстрый старт + один `curl` демо) · `S` 📝
+- [x] `CONTRIBUTING.md` · `S` 📝
+- [x] `CHANGELOG.md` (Keep a Changelog) · `S` 📝
+- [x] `AGENTS.md` — единый файл для агентных IDE · `S` 📝
+- [x] Первый коммит: `chore: initial skeleton` · `S`
 
 **DoD:** репозиторий создан, `.md` файлы на месте, `AGENTS.md` ссылается на `ROADMAP.md`.
 
 ### 0.2. Go module + layout
-- [ ] `go mod init github.com/<user>/triadsim`, Go 1.27+ · `S` 📝
-- [ ] `cmd/simulator/main.go` с пустым `main()` · `S`
-- [ ] `internal/` подпакеты: `model`, `store`, `router`, `event`, `radio`, `l2`, `sync`, `snmp`, `netconf`, `restconf`, `gnmi`, `cli`, `metrics` · `S`
-- [ ] Директории `configs/`, `docs/`, `docs/protocols/`, `docs/adr/`, `test/integration/`, `testdata/`, `yang/`, `scripts/` · `S`
-- [ ] `go build ./...` проходит · `S`
-- [ ] Коммит: `chore: go module + layout skeleton` · `S`
+- [x] `go mod init github.com/<user>/triadsim`, Go 1.27+ · `S` 📝
+- [x] `cmd/simulator/main.go` — тонкий `main()`, делегирующий в `internal/cli` · `S`
+- [x] `internal/` подпакеты: `model`, `store`, `router`, `event`, `radio`, `l2`, `sync`, `snmp`, `netconf`, `restconf`, `gnmi`, `cli`, `metrics` · `S`
+- [x] Директории `configs/`, `docs/`, `docs/protocols/`, `docs/adr/`, `test/integration/`, `testdata/`, `yang/`, `scripts/` · `S`
+- [x] `go build ./...` проходит · `S`
+- [x] Коммит: `chore: go module + layout skeleton` · `S`
 
 **DoD:** `go build ./...` и `go test ./...` проходят на пустом проекте.
 
 ### 0.3. Стек зависимостей
-- [ ] `go get github.com/gosnmp/gosnmp` · `S`
-- [ ] `go get golang.org/x/crypto/ssh` · `S`
-- [ ] `go get github.com/go-chi/chi/v5` · `S`
-- [ ] `go get github.com/spf13/cobra` · `S`
-- [ ] `go get github.com/prometheus/client_golang` · `S`
-- [ ] `go get github.com/stretchr/testify` · `S`
-- [ ] `go get github.com/testcontainers/testcontainers-go` (integration) · `S`
-- [ ] `go get gopkg.in/yaml.v3` · `S`
-- [ ] Коммит: `chore(deps): approved stack` · `S`
+- [x] `go get github.com/gosnmp/gosnmp` · `S`
+- [x] `go get golang.org/x/crypto/ssh` · `S`
+- [x] `go get github.com/go-chi/chi/v5` · `S`
+- [x] `go get github.com/spf13/cobra` · `S`
+- [x] `go get github.com/prometheus/client_golang` · `S`
+- [x] `go get github.com/stretchr/testify` · `S`
+- [x] `go get github.com/testcontainers/testcontainers-go` (integration) · `S`
+- [x] `go get gopkg.in/yaml.v3` · `S`
+- [x] Коммит: `chore(deps): approved stack` · `S`
 
 **DoD:** `go mod tidy` чист, все библиотеки зафиксированы.
 
 ### 0.4. Config (YAML)
-- [ ] `internal/config/config.go` — `Config` struct с тегами `yaml` · `M` 🧪
-- [ ] Поля: `SNMP.Port`, `SNMP.TrapPort`, `NETCONF.Port`, `RESTCONF.Port`, `Metrics.Port`, `GNMI.Enabled`, `GNMI.Port`, `Log.Level`, `Startup.File` · `S`
-- [ ] `configs/default.yaml` со всеми полями · `S` 📝
-- [ ] `Load(path string) (*Config, error)` + `Validate() error` · `M` 🧪
-- [ ] Тест: невалидный YAML → ошибка · `S` 🧪
-- [ ] Коммит: `feat(config): yaml config + validation` · `M` 🧪
+- [x] `internal/config/config.go` — `Config` struct с тегами `yaml` · `M` 🧪
+- [x] Поля: `SNMP.Port`, `SNMP.TrapPort`, `NETCONF.Port`, `RESTCONF.Port`, `Metrics.Port`, `GNMI.Enabled`, `GNMI.Port`, `Log.Level`, `Startup.File` · `S`
+- [x] `configs/default.yaml` со всеми полями · `S` 📝
+- [x] `Load(path string) (*Config, error)` + `Validate() error` · `M` 🧪
+- [x] Тест: невалидный YAML → ошибка · `S` 🧪
+- [x] Коммит: `feat(config): yaml config + validation` · `M` 🧪
 
 **DoD:** `Load("configs/default.yaml")` возвращает валидный конфиг, тест на невалидные значения зелёный.
 
 ### 0.5. Логи (log/slog)
-- [ ] `internal/log/log.go` — обёртка над `slog` · `S` 🧪
-- [ ] JSON-вывод, уровень из `Config.Log.Level` · `S`
-- [ ] Хелперы `Info`, `Warn`, `Error`, `Debug` с контекстом · `S`
-- [ ] Коммит: `feat(log): slog setup` · `S` 📝
+- [x] `internal/log/log.go` — обёртка над `slog` · `S` 🧪
+- [x] JSON-вывод, уровень из `Config.Log.Level` · `S`
+- [x] Хелперы `Info`, `Warn`, `Error`, `Debug` с контекстом · `S`
+- [x] Коммит: `feat(log): slog setup` · `S` 📝
 
 **DoD:** `log.Info("test")` пишет JSON в stderr.
 
 ### 0.6. EventBus
-- [ ] `internal/event/event.go` — `Event`, `EventType` · `S` 🧪
-- [ ] Типы: `AlarmRaised`, `AlarmCleared`, `ConfigChanged`, `StateTransition` · `S`
-- [ ] `internal/event/bus.go` — `Bus` на `chan Event` с буфером · `M` 🧪
-- [ ] Методы `Publish(e Event)`, `Subscribe() <-chan Event`, `Close()` · `M` 🧪
-- [ ] Тест: publish → subscriber получает событие · `M` 🧪
-- [ ] Коммит: `feat(event): eventbus on channels` · `M` 🧪
+- [x] `internal/event/event.go` — `Event`, `EventType` · `S` 🧪
+- [x] Типы: `AlarmRaised`, `AlarmCleared`, `ConfigChanged`, `StateTransition` · `S`
+- [x] `internal/event/bus.go` — `Bus` на `chan Event` с буфером · `M` 🧪
+- [x] Методы `Publish(e Event)`, `Subscribe() <-chan Event`, `Close()` · `M` 🧪
+- [x] Тест: publish → subscriber получает событие · `M` 🧪
+- [x] Коммит: `feat(event): eventbus on channels` · `M` 🧪
 
 **DoD:** два подписчика получают одно событие; при переполнении буфера — non-blocking drop с логом.
 
 ### 0.7. Интерфейсы Store и Clock
-- [ ] `internal/store/store.go` — интерфейс `Store` (Get, Set, Delete, Diff, Commit, Rollback) · `M` 🧪
-- [ ] `internal/clock/clock.go` — интерфейс `Clock` (`Now`, `AfterFunc`) · `S` 🧪
-- [ ] Реализация `RealClock` · `S`
-- [ ] Тестовая реализация `FakeClock` в `internal/clock/fake.go` · `M` 🧪
-- [ ] Коммит: `feat(store,clock): interfaces` · `M` 🧪
+- [x] `internal/store/store.go` — интерфейс `Store` (Get, Set, Delete, Diff, Commit, Rollback) · `M` 🧪
+- [x] `internal/clock/clock.go` — интерфейс `Clock` (`Now`, `AfterFunc`) · `S` 🧪
+- [x] Реализация `RealClock` · `S`
+- [x] Тестовая реализация `FakeClock` в `internal/clock/fake.go` · `M` 🧪
+- [x] Коммит: `feat(store,clock): interfaces` · `M` 🧪
 
 **DoD:** тесты используют `FakeClock`, `time.Sleep` нигде не встречается.
 
 ### 0.8. Скрипты и Makefile
-- [ ] `scripts/check.sh` — `gofmt -l`, `go vet`, `go test ./...` · `S` 🔌
-- [ ] `scripts/demo.sh` — заглушка главного сценария · `S` 📝
-- [ ] `Makefile`: `build`, `test`, `lint`, `run`, `demo`, `clean` · `M` 📝
-- [ ] Коммит: `chore: scripts + Makefile` · `S` 📝
+- [x] `scripts/check.sh` — `gofmt -l`, `go vet`, `go test ./...` · `S` 🔌
+- [x] `scripts/demo.sh` — заглушка главного сценария · `S` 📝
+- [x] `Makefile`: `build`, `test`, `lint`, `run`, `demo`, `clean` · `M` 📝
+- [x] Коммит: `chore: scripts + Makefile` · `S` 📝
 
 **DoD:** `make lint && make test` зелёные.
 
 ### 0.9. Документация фазы 0
-- [ ] `docs/architecture.md` — шаблон (модульный монолит, потоки данных) · `S` 📝
-- [ ] `docs/store.md` — шаблон (running/candidate/startup) · `S` 📝
-- [ ] `docs/eventbus.md` — типы событий, подписчики · `S` 📝
-- [ ] `docs/config.md` — YAML + startup JSON · `S` 📝
-- [ ] `docs/adr/0001-record-architecture-decisions.md` · `S` 📝
-- [ ] `docs/adr/template.md` · `S` 📝
-- [ ] Коммит: `docs: architecture, store, eventbus, config, adr` · `M` 📝
+- [x] `docs/architecture.md` — шаблон (модульный монолит, потоки данных) · `S` 📝
+- [x] `docs/store.md` — шаблон (running/candidate/startup) · `S` 📝
+- [x] `docs/eventbus.md` — типы событий, подписчики · `S` 📝
+- [x] `docs/config.md` — YAML + startup JSON · `S` 📝
+- [x] `docs/adr/0001-record-architecture-decisions.md` · `S` 📝
+- [x] `docs/adr/template.md` · `S` 📝
+- [x] Коммит: `docs: architecture, store, eventbus, config, adr` · `M` 📝
 
 **✅ Phase 0 завершена, когда:** `go run ./cmd/simulator start` поднимается, логирует старт, `make lint && make test` зелёные.
+
+> **Отклонения при реализации:**
+> - `cmd/simulator/main.go` сразу делегирует в `internal/cli` (`root` + `start`), а не содержит пустой `main()`: без команды `start` не выполнялся бы DoD фазы. Остальные команды CLI остаются в 6.6.
+> - `internal/tools/tools.go` (тег сборки `tools`) держит blank-импорты утверждённого стека, иначе `go mod tidy` удалил бы ещё не используемые библиотеки (gosnmp, x/crypto/ssh, chi, prometheus, testcontainers).
+> - Коммиты 0.6/0.7 идут в обратном порядке относительно нумерации: `feat(store,clock): interfaces` перед `feat(event): eventbus on channels`, потому что `event.New` принимает `clock.Clock`.
+> - `store.Store` адресует датастор явным параметром — `Get(ctx, ds, path)` вместо `Get(path)`. Это требование протоколов: NETCONF `get-config <source><candidate/>` и `copy-config` в `startup`, RESTCONF `?datastore=candidate`. Контракт зафиксирован в `docs/store.md`.
+> - `docs/protocols/SNMP.md` §6.4/§7.2 приведены к плоской схеме конфига: community фиксирован `public`, списка trap-receivers нет.
+> - Конфиг — плоско, по списку полей задачи 0.4; вложенная схема из ранней версии `docs/protocols/SNMP.md` не используется.
 
 ---
 

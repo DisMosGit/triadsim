@@ -61,15 +61,20 @@ metric — is described in `.docs/desicion.md` §3.6 and will be reproduced by `
 ## Repository layout
 
 ```
-cmd/simulator/       cobra CLI entrypoint (start, ...)
-internal/model/      managed-object structs (path/xml/json tags)
+cmd/simulator/       binary entry point, delegates to internal/cli
+internal/cli/        cobra commands (start, ...)
+internal/config/     YAML configuration, defaults and validation
+internal/log/        log/slog JSON logging on stderr
+internal/event/      EventBus on Go channels
+internal/clock/      injectable Clock, RealClock and FakeClock
 internal/store/      running / candidate / startup datastores
 internal/router/     path <-> model, OID <-> path, RPC dispatch
-internal/event/      EventBus on Go channels
+internal/model/      managed-object structs (path/xml/json tags)
 internal/radio/      RRL domain: link budget, ATPC, ACM, alarms
 internal/l2/         L2 domain: VLAN/QinQ, MAC table, STP/RSTP, LLDP, counters
 internal/sync/       sync domain: PTP, SyncE, ESMC/SSM, holdover
-internal/{snmp,netconf,restconf,gnmi,cli,metrics}/   management planes
+internal/{snmp,netconf,restconf,gnmi,metrics}/   management planes
+internal/tools/      blank imports pinning the approved dependency stack
 configs/             YAML configuration
 docs/                architecture, store, eventbus, config, ADRs, protocols
 scripts/             check.sh, demo.sh

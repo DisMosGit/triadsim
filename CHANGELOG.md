@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/clock`: injectable `Clock`/`Timer` interfaces with `RealClock` and `FakeClock` test implementation.
 - `cmd/simulator` cobra entrypoint with the `start` command that loads config, sets up logging and runs the EventBus.
 - Tooling: `scripts/check.sh`, `scripts/demo.sh` (stub) and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
-- Documentation: `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
+- Documentation: `docs/README.md` (index), `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
 
 ### Notes
 

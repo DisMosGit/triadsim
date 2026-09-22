@@ -251,25 +251,16 @@ SNMPv2-Trap-PDU:
 
 ### 6.4. Trap Delivery
 
-Traps are sent to one or more configured trap receivers. TriadSim supports trap receiver configuration via the YAML config file:
+Traps are sent to a single destination taken from the YAML config file: the agent port and the
+trap destination port. The MVP has no receiver list and no per-receiver community.
 
 ```yaml
 snmp:
-  agent:
-    port: 1161
-    community: public
-  traps:
-    enabled: true
-    receivers:
-      - host: 127.0.0.1
-        port: 1162
-        community: public
-      - host: 192.168.1.100
-        port: 162
-        community: public
+  port: 1161        # agent
+  trap-port: 1162   # trap destination port
 ```
 
-Trap delivery is fire-and-forget. If a receiver is unreachable, the trap is silently dropped; no retransmission is attempted. This is consistent with the unconfirmed nature of SNMPv2-Trap-PDUs .
+Traps go to `127.0.0.1:<snmp.trap-port>`. Trap delivery is fire-and-forget. If the destination is unreachable, the trap is silently dropped; no retransmission is attempted. This is consistent with the unconfirmed nature of SNMPv2-Trap-PDUs .
 
 ---
 
@@ -289,7 +280,7 @@ TriadSim uses a single community string for all operations:
 |---|---|---|
 | `public` | read-only + read-write | Full access to all MIB objects |
 
-No separate read-only or read-write communities are defined. The community string is configured in the YAML configuration file and can be changed at startup. For demonstration purposes, authentication is intentionally absent.
+No separate read-only or read-write communities are defined. The community string is fixed to `public` in the MVP and is not configurable through the YAML file. For demonstration purposes, authentication is intentionally absent.
 
 ### 7.3. Security Considerations
 
