@@ -195,7 +195,7 @@ func (r *trapReceiver) trapOID(t *testing.T) string {
 	packet, err := (&gosnmp.GoSNMP{Version: gosnmp.Version2c, Community: "public"}).SnmpDecodePacket(buf[:n])
 	require.NoError(t, err)
 	for _, variable := range packet.Variables {
-		if strings.TrimPrefix(variable.Name, ".") != "1.3.6.1.2.1.11.4.1.0" {
+		if strings.TrimPrefix(variable.Name, ".") != "1.3.6.1.6.3.1.1.4.1.0" {
 			continue
 		}
 		value, ok := variable.Value.(string)

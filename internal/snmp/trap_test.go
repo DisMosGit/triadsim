@@ -89,6 +89,18 @@ func newTrapFixture(t *testing.T, bus *event.Bus) *trapFixture {
 	return &trapFixture{sender: sender, receiver: receiver, bus: bus, clock: clk}
 }
 
+// Wire constants taken from the specification, never from the implementation:
+// a test that looks a varbind up by the production constant cannot notice the
+// constant drifting away from the MIB.
+const (
+	// SNMPv2-MIB::sysUpTime.0 (RFC 3418), the first mandatory varbind.
+	wantSysUpTimeOID = "1.3.6.1.2.1.1.3.0"
+	// SNMPv2-MIB::snmpTrapOID.0, the second mandatory varbind of an
+	// SNMPv2-Trap-PDU (RFC 3418 snmpTrapOID ::= { snmpTrap 1 },
+	// snmpTrap ::= { snmpMIBObjects 4 }; RFC 3416 §4.2.6).
+	wantSnmpTrapOIDOID = "1.3.6.1.6.3.1.1.4.1.0"
+)
+
 // varbind returns the varbind with the given OID, ignoring the leading dot
 // gosnmp's decoder adds.
 func varbind(t *testing.T, packet *gosnmp.SnmpPacket, oid string) gosnmp.SnmpPDU {
@@ -108,7 +120,7 @@ func varbind(t *testing.T, packet *gosnmp.SnmpPacket, oid string) gosnmp.SnmpPDU
 func trapOID(t *testing.T, packet *gosnmp.SnmpPacket) string {
 	t.Helper()
 
-	value, ok := varbind(t, packet, snmpTrapOIDOID).Value.(string)
+	value, ok := varbind(t, packet, wantSnmpTrapOIDOID).Value.(string)
 	require.True(t, ok, "snmpTrapOID.0 is an ObjectIdentifier")
 	return strings.TrimPrefix(value, ".")
 }
@@ -130,8 +142,15 @@ func TestSendRadioLinkDownTrap(t *testing.T) {
 	assert.Equal(t, DefaultCommunity, packet.Community)
 	assert.Equal(t, gosnmp.SNMPv2Trap, packet.PDUType)
 
-	// The two mandatory varbinds come first.
-	assert.Equal(t, uint32(9000), varbind(t, packet, sysUpTimeOID).Value)
+	// The two mandatory varbinds come first, in the order RFC 3416 §4.2.6
+	// prescribes: sysUpTime.0 (TimeTicks), then snmpTrapOID.0.
+	require.GreaterOrEqual(t, len(packet.Variables), 2)
+	first, second := packet.Variables[0], packet.Variables[1]
+	assert.Equal(t, wantSysUpTimeOID, strings.TrimPrefix(first.Name, "."))
+	assert.Equal(t, gosnmp.TimeTicks, first.Type)
+	assert.Equal(t, uint32(9000), first.Value)
+	assert.Equal(t, wantSnmpTrapOIDOID, strings.TrimPrefix(second.Name, "."))
+	assert.Equal(t, gosnmp.ObjectIdentifier, second.Type)
 	assert.Equal(t, TrapRadioLinkDown, trapOID(t, packet))
 
 	// The payload names the link and its measured levels. The seeded RSSI OID
