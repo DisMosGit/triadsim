@@ -1,0 +1,302 @@
+// TriadSim radio-link (RRL) module: the radio link of a radio interface, its
+// link budget, ATPC, ACM and the modulation-profile table.
+//
+// DOCUMENTATION ONLY. The runtime model is the Go structs in internal/model;
+// the simulator never parses YANG. The link lives under
+// interfaces/interface/radio-link in sim-device, which is why this module
+// exports a grouping rather than a top-level container.
+//
+// Mirrors internal/model/radio.go (RadioLink, LinkBudget, ATPC, ACM,
+// ModProfile) and internal/router/modules.go (ModuleRadioLink). The link budget
+// is described in docs/protocols/RADIO-RRL.md.
+module sim-radio-link {
+
+  yang-version 1.1;
+  namespace "urn:sim:radio-link";
+  prefix rl;
+
+  organization
+    "TriadSim";
+  contact
+    "TriadSim maintainers";
+  description
+    "A point-to-point radio link: transmit power, received signal level, fade
+     margin, capacity, adaptive coding and modulation, and automatic transmit
+     power control.";
+  revision 2026-09-22 {
+    description
+      "Initial revision, matching the Go model of the simulator.";
+  }
+
+  grouping radio-link {
+    description
+      "The radio link of one radio interface.";
+
+    leaf name {
+      type string;
+      description
+        "Link name, which is also the name of its interface.";
+    }
+    leaf tx-power {
+      type decimal64 {
+        fraction-digits 2;
+        range "-10.0..30.0";
+      }
+      units "dBm";
+      description
+        "Configured transmit power.";
+    }
+    leaf rssi {
+      type decimal64 {
+        fraction-digits 2;
+        range "-99.0..-20.0";
+      }
+      units "dBm";
+      config false;
+      description
+        "Received signal strength; vendor OID simRadioRssi. It drops by the
+         injected fade when the link fails.";
+    }
+    leaf fade-margin {
+      type decimal64 {
+        fraction-digits 2;
+        range "-40.0..40.0";
+      }
+      units "dB";
+      config false;
+      description
+        "Distance of the received level from the receiver threshold.";
+    }
+    leaf capacity {
+      type uint32;
+      units "Mbit/s";
+      config false;
+      description
+        "Current capacity, taken from the current modulation profile.";
+    }
+    leaf link-state {
+      type enumeration {
+        enum up;
+        enum degraded;
+        enum down;
+      }
+      config false;
+      description
+        "Overall link state; a change raises or clears radioLinkDegraded and
+         radioLinkDown.";
+    }
+
+    container link-budget {
+      description
+        "The static link budget the received level is computed from.";
+
+      leaf link-length {
+        type decimal64 {
+          fraction-digits 2;
+          range "0.01..100.0";
+        }
+        units "km";
+        description
+          "Distance between the two ends.";
+      }
+      leaf frequency {
+        type decimal64 {
+          fraction-digits 3;
+          range "6.0..86.0";
+        }
+        units "GHz";
+        description
+          "Carrier frequency.";
+      }
+      leaf tx-antenna-gain {
+        type decimal64 {
+          fraction-digits 2;
+          range "30.0..45.0";
+        }
+        units "dBi";
+        description
+          "Gain of the local antenna.";
+      }
+      leaf rx-antenna-gain {
+        type decimal64 {
+          fraction-digits 2;
+          range "30.0..45.0";
+        }
+        units "dBi";
+        description
+          "Gain of the remote antenna.";
+      }
+      leaf feed-loss {
+        type decimal64 {
+          fraction-digits 2;
+          range "1.0..5.0";
+        }
+        units "dB";
+        description
+          "Feed and jumper loss.";
+      }
+      leaf calculated-rsl {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        config false;
+        description
+          "Received level the budget computes from the transmitted power.";
+      }
+    }
+
+    container atpc {
+      description
+        "Automatic transmit power control.";
+
+      leaf enabled {
+        type boolean;
+        description
+          "Whether the ATPC loop runs.";
+      }
+      leaf target-rsl {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        description
+          "Received level the loop drives towards.";
+      }
+      leaf min-power {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        description
+          "Lower bound of the transmit power; below max-power.";
+      }
+      leaf max-power {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        description
+          "Upper bound of the transmit power; above min-power.";
+      }
+      leaf range {
+        type decimal64 {
+          fraction-digits 2;
+          range "0.0..40.0";
+        }
+        units "dB";
+        description
+          "Total adjustable range max-power - min-power.";
+      }
+      leaf current-power {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        config false;
+        description
+          "Power the loop currently applies; each step is 1 dB.";
+      }
+    }
+
+    container acm {
+      description
+        "Adaptive coding and modulation.";
+
+      leaf enabled {
+        type boolean;
+        description
+          "Whether profile selection runs.";
+      }
+      leaf mode {
+        type enumeration {
+          enum adaptive;
+          enum fixed;
+        }
+        description
+          "adaptive follows the signal-to-noise ratio, fixed keeps the current
+           profile.";
+      }
+      leaf min-profile {
+        type uint8 {
+          range "1..12";
+        }
+        description
+          "Lowest profile the selection may use.";
+      }
+      leaf max-profile {
+        type uint8 {
+          range "1..12";
+        }
+        description
+          "Highest profile the selection may use; not below min-profile.";
+      }
+      leaf current-profile {
+        type uint8 {
+          range "1..12";
+        }
+        config false;
+        description
+          "Profile the selection currently uses.";
+      }
+      leaf current-capacity {
+        type uint32;
+        units "Mbit/s";
+        config false;
+        description
+          "Capacity of the current profile.";
+      }
+    }
+
+    list modulation-profile {
+      key "id";
+      description
+        "The ACM profile table (docs/protocols/RADIO-RRL.md section 5.2).";
+
+      leaf id {
+        type uint8 {
+          range "1..12";
+        }
+        description
+          "Profile number, lowest modulation first.";
+      }
+      leaf name {
+        type string;
+        description
+          "Display name, for example QPSK-L or 1024QAM.";
+      }
+      leaf modulation {
+        type string;
+        description
+          "Modulation scheme.";
+      }
+      leaf coding-rate {
+        type string;
+        description
+          "Forward error correction coding rate.";
+      }
+      leaf spectral-efficiency {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "bit/s/Hz";
+        description
+          "Spectral efficiency of the profile.";
+      }
+      leaf rsl-threshold {
+        type decimal64 {
+          fraction-digits 2;
+        }
+        units "dBm";
+        description
+          "Lowest received level the profile tolerates.";
+      }
+      leaf capacity {
+        type uint32;
+        units "Mbit/s";
+        description
+          "Capacity the profile provides.";
+      }
+    }
+  }
+}

@@ -241,3 +241,36 @@ func (r *Router) Children(path string) ([]Node, error) {
 	}
 	return children, nil
 }
+
+// SchemaNode is one node of the static schema tree together with its children.
+type SchemaNode struct {
+	Node
+	// Children are the node's schema children in the declaration order of the
+	// model fields.
+	Children []SchemaNode
+}
+
+// Schema returns the whole type-driven schema tree rooted at a synthetic
+// container node whose name is empty. Like Children it is instance-agnostic: a
+// list appears exactly once, with its key name and its entry children, whatever
+// the datastores hold. It is what a schema dump (the CLI schema command) and a
+// documentation generator walk.
+func (r *Router) Schema() SchemaNode {
+	if r.schema == nil {
+		return SchemaNode{}
+	}
+	return schemaNodeOf(r.schema)
+}
+
+// schemaNodeOf converts one internal schema node into its exported form.
+func schemaNodeOf(node *schemaNode) SchemaNode {
+	out := SchemaNode{Node: node.node}
+	if len(node.children) == 0 {
+		return out
+	}
+	out.Children = make([]SchemaNode, 0, len(node.children))
+	for _, child := range node.children {
+		out.Children = append(out.Children, schemaNodeOf(child))
+	}
+	return out
+}

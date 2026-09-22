@@ -1,0 +1,221 @@
+// TriadSim synchronization module: the PTP clock, SyncE source selection and
+// the ESMC/SSM quality levels.
+//
+// DOCUMENTATION ONLY. The runtime model is the Go structs in internal/model;
+// the simulator never parses YANG and never exchanges a real PTP or ESMC
+// message.
+//
+// Mirrors internal/model/sync.go (PTPClock, SyncEState, SyncEInterface, ESMC)
+// and internal/router/modules.go (ModuleSync). The domain is described in
+// docs/protocols/PTP.md and docs/protocols/SYNCE.md.
+module sim-sync {
+
+  yang-version 1.1;
+  namespace "urn:sim:sync";
+  prefix sync;
+
+  organization
+    "TriadSim";
+  contact
+    "TriadSim maintainers";
+  description
+    "Synchronization: a PTP clock with its state machine and holdover, SyncE
+     with source selection, and the ESMC/SSM quality levels.";
+  revision 2026-09-22 {
+    description
+      "Initial revision, matching the Go model of the simulator.";
+  }
+
+  container ptp {
+    description
+      "IEEE 1588 (PTP) telecom clock.";
+
+    container clock {
+      description
+        "The clock's configuration and its measured state. The state machine
+         follows the G.8275.1 clock states.";
+
+      leaf mode {
+        type enumeration {
+          enum master;
+          enum slave;
+          enum boundary;
+        }
+        description
+          "Clock mode; a master is locked to its own reference.";
+      }
+      leaf domain {
+        type uint8 {
+          range "0..127";
+        }
+        description
+          "PTP domain number.";
+      }
+      leaf priority1 {
+        type uint8;
+        description
+          "First priority of the best master clock algorithm.";
+      }
+      leaf priority2 {
+        type uint8;
+        description
+          "Second priority of the best master clock algorithm.";
+      }
+      leaf clock-class {
+        type uint8;
+        description
+          "Clock class of the clock (ITU-T G.8275.1).";
+      }
+      leaf clock-accuracy {
+        type uint8;
+        description
+          "Clock accuracy enumeration value.";
+      }
+      leaf holdover-timeout {
+        type uint32;
+        units "seconds";
+        description
+          "How long the clock stays in holdover-in-spec after losing its
+           source before it raises syncHoldover.";
+      }
+      leaf state {
+        type enumeration {
+          enum freerun;
+          enum acquiring;
+          enum locked;
+          enum holdover-in-spec;
+          enum holdover-out-of-spec;
+        }
+        config false;
+        description
+          "Current clock state; every real transition publishes a
+           StateTransition event.";
+      }
+      leaf offset {
+        type decimal64 {
+          fraction-digits 3;
+        }
+        units "nanoseconds";
+        config false;
+        description
+          "Simulated offset from the reference.";
+      }
+      leaf jitter {
+        type decimal64 {
+          fraction-digits 3;
+        }
+        units "nanoseconds";
+        config false;
+        description
+          "Simulated jitter of the recovered clock.";
+      }
+    }
+  }
+
+  container synce {
+    description
+      "Synchronous Ethernet: source selection and the ESMC channel.";
+
+    leaf enabled {
+      type boolean;
+      description
+        "Whether SyncE runs.";
+    }
+    leaf selected-source {
+      type string;
+      config false;
+      description
+        "Interface the selection chose, or empty while no source qualifies.";
+    }
+    leaf selected-ql {
+      type enumeration {
+        enum QL-PRC;
+        enum QL-SSU-A;
+        enum QL-SSU-B;
+        enum QL-SEC;
+        enum QL-DNU;
+      }
+      config false;
+      description
+        "Quality level of the selected source.";
+    }
+    leaf selected-extended-ql {
+      type string;
+      config false;
+      description
+        "Extended (eSSM) quality level of the selected source, for example
+         QL-PRTC.";
+    }
+
+    container interfaces {
+      description
+        "Per-interface SyncE configuration.";
+
+      list interface {
+        key "name";
+        description
+          "One SyncE-capable interface.";
+
+        leaf name {
+          type string;
+          description
+            "Interface name.";
+        }
+        leaf ssm-enabled {
+          type boolean;
+          description
+            "Whether SSM/ESMC is enabled on the interface.";
+        }
+        leaf ql {
+          type enumeration {
+            enum QL-PRC;
+            enum QL-SSU-A;
+            enum QL-SSU-B;
+            enum QL-SEC;
+            enum QL-DNU;
+          }
+          description
+            "Quality level the interface carries.";
+        }
+        leaf extended-ql {
+          type string;
+          description
+            "Extended quality level the interface carries.";
+        }
+        leaf priority {
+          type uint8;
+          description
+            "Selection priority; a lower number wins between equal quality
+             levels.";
+        }
+        leaf ptp-preference {
+          type boolean;
+          description
+            "Whether the interface is preferred over PTP as the source.";
+        }
+      }
+    }
+
+    container esmc {
+      description
+        "The ESMC (SSM) channel, simplified to configuration only.";
+
+      leaf enabled {
+        type boolean;
+        description
+          "Whether ESMC messages are simulated.";
+      }
+      leaf tx-interval {
+        type uint32;
+        units "seconds";
+        description
+          "Interval between ESMC messages.";
+      }
+      leaf extended-codes {
+        type boolean;
+        description
+          "Whether extended (eSSM) quality levels are used.";
+      }
+    }
+  }
+}

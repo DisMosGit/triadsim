@@ -80,7 +80,7 @@ func TestRootCmdExposesEveryCommand(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		names = append(names, sub.Name())
 	}
-	for _, want := range []string{"start", "alarm", "dump", "config", "version"} {
+	for _, want := range []string{"start", "alarm", "dump", "config", "schema", "version"} {
 		assert.Contains(t, names, want)
 	}
 

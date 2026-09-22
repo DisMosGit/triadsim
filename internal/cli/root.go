@@ -21,7 +21,7 @@ func NewRootCmd() *cobra.Command {
 		Short: "Simulate a telecom device with radio, L2 and sync domains",
 		Long: "TriadSim simulates a single telecom device that combines a radio link (RRL),\n" +
 			"L2 switching and synchronization domains on one managed device, exposing\n" +
-			"SNMP v2c, NETCONF and RESTCONF management planes.",
+			"SNMP v2c, NETCONF, RESTCONF and (optionally) gNMI management planes.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -30,6 +30,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(newAlarmCmd(os.Stdout))
 	cmd.AddCommand(newDumpCmd(os.Stdout))
 	cmd.AddCommand(newConfigCmd(os.Stdout))
+	cmd.AddCommand(newSchemaCmd(os.Stdout))
 	cmd.AddCommand(newVersionCmd(os.Stdout))
 
 	return cmd

@@ -1,0 +1,176 @@
+// TriadSim device module: the device identity, the interface list and the
+// interface counters.
+//
+// DOCUMENTATION ONLY. The runtime model is the Go structs in internal/model;
+// this module describes the same tree for readers and for tests that check the
+// two stay in step. The simulator never parses YANG.
+//
+// Mirrors internal/model/device.go (Device, SystemInfo, Interface,
+// InterfaceCounters) and the interface part of internal/router/modules.go
+// (ModuleDevice).
+module sim-device {
+
+  yang-version 1.1;
+  namespace "urn:sim:device";
+  prefix dev;
+
+  import sim-radio-link {
+    prefix rl;
+    description
+      "The radio link of a radio interface.";
+  }
+
+  organization
+    "TriadSim";
+  contact
+    "TriadSim maintainers";
+  description
+    "The managed device: identity, interfaces and their counters. The radio,
+     L2 and synchronization objects hang off it in their own modules.";
+  revision 2026-09-22 {
+    description
+      "Initial revision, matching the Go model of the simulator.";
+  }
+
+  container system-info {
+    description
+      "System-wide administrative and state information. Every leaf maps onto
+       one of the sys* objects of SNMP MIB-II.";
+
+    leaf device-id {
+      type string;
+      description
+        "Stable identifier of the simulated device.";
+    }
+    leaf name {
+      type string;
+      description
+        "Administrative name (sysName).";
+    }
+    leaf description {
+      type string;
+      description
+        "Free-form description (sysDescr).";
+    }
+    leaf contact {
+      type string;
+      description
+        "Contact person (sysContact).";
+    }
+    leaf location {
+      type string;
+      description
+        "Physical location (sysLocation).";
+    }
+    leaf uptime {
+      type uint32;
+      units "seconds";
+      config false;
+      description
+        "Seconds since the simulator started (sysUpTime). It is refreshed once
+         per second.";
+    }
+  }
+
+  container interfaces {
+    description
+      "The interfaces of the device: one radio interface per radio link plus
+       the Ethernet ports.";
+
+    list interface {
+      key "name";
+      description
+        "One interface. A radio interface carries a radio link, an Ethernet
+         interface does not.";
+
+      leaf name {
+        type string;
+        description
+          "Interface name, for example radio0, eth0 or eth1.";
+      }
+      leaf type {
+        type enumeration {
+          enum radio;
+          enum ethernet;
+        }
+        description
+          "Domain the interface belongs to.";
+      }
+      leaf enabled {
+        type boolean;
+        description
+          "Administrative state (ifAdminStatus).";
+      }
+      leaf mtu {
+        type uint32 {
+          range "68..9216";
+        }
+        units "bytes";
+        description
+          "Maximum transmission unit.";
+      }
+      leaf mac-address {
+        type string;
+        description
+          "MAC address in 02:00:00:00:00:01 form; empty for a radio
+           interface.";
+      }
+
+      container radio-link {
+        presence
+          "The interface carries a radio link.";
+        description
+          "The radio link (RRL) of a radio interface, described in the
+           sim-radio-link module.";
+        uses rl:radio-link;
+      }
+
+      container counters {
+        config false;
+        description
+          "Interface statistics, published through ifTable and ifXTable.";
+
+        leaf in-octets {
+          type uint64;
+          description
+            "Received octets.";
+        }
+        leaf out-octets {
+          type uint64;
+          description
+            "Transmitted octets.";
+        }
+        leaf in-ucast-pkts {
+          type uint64;
+          description
+            "Received unicast packets.";
+        }
+        leaf out-ucast-pkts {
+          type uint64;
+          description
+            "Transmitted unicast packets.";
+        }
+        leaf in-errors {
+          type uint32;
+          description
+            "Received packets with errors.";
+        }
+        leaf out-errors {
+          type uint32;
+          description
+            "Transmission errors.";
+        }
+        leaf in-discards {
+          type uint32;
+          description
+            "Received packets dropped.";
+        }
+        leaf out-discards {
+          type uint32;
+          description
+            "Transmitted packets dropped.";
+        }
+      }
+    }
+  }
+}

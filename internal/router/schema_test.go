@@ -1,11 +1,15 @@
 package router
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DisMosGit/triadsim/internal/model"
+	"github.com/DisMosGit/triadsim/internal/store"
 )
 
 // nodeNames returns the child names in order, for compact assertions.
@@ -167,4 +171,70 @@ func TestChildrenRejectsInvalidPaths(t *testing.T) {
 			assert.True(t, errors.Is(err, tt.want), "want %v, got %v", tt.want, err)
 		})
 	}
+}
+
+// schemaChild returns the child of node named name, failing the test otherwise.
+func schemaChild(t *testing.T, node SchemaNode, name string) SchemaNode {
+	t.Helper()
+
+	for _, child := range node.Children {
+		if child.Name == name {
+			return child
+		}
+	}
+	t.Fatalf("schema child %q not found", name)
+	return SchemaNode{}
+}
+
+// TestSchemaReturnsTheWholeTree walks the exported schema tree, which needs no
+// datastore instance: the interface list is expanded once, with its key, even
+// though the tree carries no radio0 or eth0.
+func TestSchemaReturnsTheWholeTree(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	root := r.Schema()
+	assert.Empty(t, root.Name)
+	assert.Equal(t,
+		[]string{"system-info", "interfaces", "vlans", "mac-table", "stp", "lldp", "ptp", "synce"},
+		schemaNames(root.Children))
+
+	interfaces := schemaChild(t, root, "interfaces")
+	assert.Equal(t, KindContainer, interfaces.Kind)
+
+	entry := schemaChild(t, interfaces, "interface")
+	assert.Equal(t, KindList, entry.Kind)
+	assert.Equal(t, "name", entry.Key)
+
+	radioLink := schemaChild(t, entry, "radio-link")
+	txPower := schemaChild(t, radioLink, "tx-power")
+	assert.Equal(t, KindLeaf, txPower.Kind)
+	assert.Equal(t, LeafFloat64, txPower.Leaf)
+
+	profiles := schemaChild(t, radioLink, "modulation-profile")
+	assert.Equal(t, KindList, profiles.Kind)
+	assert.Equal(t, "id", profiles.Key)
+	assert.Equal(t, LeafUint8, schemaChild(t, profiles, "id").Leaf)
+}
+
+// TestSchemaIsIndependentOfTheDatastore documents that the exported tree is
+// built from the model type: two routers over the same template return the same
+// tree with and without seeded values.
+func TestSchemaIsIndependentOfTheDatastore(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory(store.Options{})
+	r, err := New(model.DefaultDevice(), st)
+	require.NoError(t, err)
+
+	empty := r.Schema()
+	require.NoError(t, r.Seed(ctx, store.Running))
+	assert.Equal(t, empty, r.Schema())
+}
+
+// schemaNames returns the names of the child nodes, for compact assertions.
+func schemaNames(nodes []SchemaNode) []string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.Name)
+	}
+	return names
 }

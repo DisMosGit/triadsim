@@ -1,0 +1,400 @@
+// TriadSim L2 switching module: VLANs and QinQ, the MAC forwarding database,
+// simplified STP/RSTP and LLDP.
+//
+// DOCUMENTATION ONLY. The runtime model is the Go structs in internal/model;
+// the simulator never parses YANG and no BPDU or LLDPDU ever reaches the wire.
+//
+// Mirrors internal/model/l2.go (VLAN, VLANPort, MACTable, MACEntry, STPState,
+// STPPort, LLDPConfig, LLDPNeighbor) and internal/router/modules.go
+// (ModuleL2). The domain is described in docs/protocols/L2.md.
+module sim-l2-switching {
+
+  yang-version 1.1;
+  namespace "urn:sim:l2-switching";
+  prefix l2;
+
+  organization
+    "TriadSim";
+  contact
+    "TriadSim maintainers";
+  description
+    "L2 switching: 802.1Q VLANs with QinQ outer tags, the VLAN-aware MAC
+     forwarding database, a simplified STP/RSTP state machine and LLDP
+     neighbours.";
+  revision 2026-09-22 {
+    description
+      "Initial revision, matching the Go model of the simulator.";
+  }
+
+  container vlans {
+    description
+      "The VLAN table.";
+
+    list vlan {
+      key "id";
+      description
+        "One VLAN and the ports that carry it.";
+
+      leaf id {
+        type uint16 {
+          range "1..4094";
+        }
+        description
+          "VLAN identifier.";
+      }
+      leaf name {
+        type string;
+        description
+          "Administrative name.";
+      }
+      leaf description {
+        type string;
+        description
+          "Free-form description.";
+      }
+
+      container ports {
+        description
+          "The VLAN's membership on the device's interfaces.";
+
+        list port {
+          key "port";
+          description
+            "One member port.";
+
+          leaf port {
+            type string;
+            description
+              "Interface name.";
+          }
+          leaf mode {
+            type enumeration {
+              enum access;
+              enum trunk;
+              enum hybrid;
+            }
+            description
+              "Port mode.";
+          }
+          leaf pvid {
+            type uint16 {
+              range "1..4094";
+            }
+            description
+              "Port VLAN identifier used for untagged frames.";
+          }
+          leaf tagged {
+            type boolean;
+            description
+              "Whether frames leave the port tagged.";
+          }
+          leaf qinq {
+            type boolean;
+            description
+              "Whether the port pushes an outer (S-) tag.";
+          }
+          leaf s-tag-vid {
+            type uint16 {
+              range "1..4094";
+            }
+            description
+              "Outer tag of a QinQ port; different from the inner VLAN id.";
+          }
+          leaf c-tag-handling {
+            type enumeration {
+              enum push;
+              enum pop;
+              enum transparent;
+            }
+            description
+              "What the port does with the inner (C-) tag.";
+          }
+        }
+      }
+    }
+  }
+
+  container mac-table {
+    description
+      "The VLAN-aware MAC forwarding database, published through
+       dot1dTpFdbTable.";
+
+    leaf aging-time {
+      type uint32 {
+        range "10..1000000";
+      }
+      units "seconds";
+      description
+        "Age after which a dynamic entry is removed.";
+    }
+    leaf max-entries {
+      type uint32;
+      description
+        "Capacity of the forwarding database.";
+    }
+    leaf current-count {
+      type uint32;
+      config false;
+      description
+        "Number of entries currently held.";
+    }
+
+    list entry {
+      key "mac-address";
+      description
+        "One learned or configured entry.";
+
+      leaf mac-address {
+        type string;
+        description
+          "MAC address in 02:00:00:00:00:02 form.";
+      }
+      leaf vlan-id {
+        type uint16 {
+          range "1..4094";
+        }
+        description
+          "VLAN the entry belongs to.";
+      }
+      leaf port {
+        type uint32;
+        description
+          "Bridge port number the address is reachable through.";
+      }
+      leaf type {
+        type enumeration {
+          enum dynamic;
+          enum static;
+        }
+        description
+          "dynamic entries age out, static entries do not.";
+      }
+      leaf age {
+        type uint32;
+        units "seconds";
+        config false;
+        description
+          "Age of the entry.";
+      }
+      leaf permanent {
+        type boolean;
+        description
+          "Whether the entry survives a flush; a permanent entry is static.";
+      }
+    }
+  }
+
+  container stp {
+    description
+      "Simplified STP/RSTP: no BPDU is encoded on the wire, the state machine
+       runs in process.";
+
+    container state {
+      description
+        "Bridge and port state.";
+
+      leaf enabled {
+        type boolean;
+        description
+          "Whether spanning tree runs.";
+      }
+      leaf protocol {
+        type enumeration {
+          enum stp;
+          enum rstp;
+        }
+        description
+          "Protocol variant; rstp collapses the transient states into
+           discarding.";
+      }
+      leaf bridge-priority {
+        type uint16 {
+          range "0..61440";
+        }
+        description
+          "Bridge priority, a multiple of 4096.";
+      }
+      leaf bridge-address {
+        type string;
+        description
+          "Bridge MAC address used in the root election.";
+      }
+      leaf root-id {
+        type string;
+        config false;
+        description
+          "Identifier of the elected root bridge.";
+      }
+      leaf root-cost {
+        type uint32;
+        config false;
+        description
+          "Path cost to the root bridge.";
+      }
+
+      container ports {
+        description
+          "Per-port spanning tree state.";
+
+        list port {
+          key "port";
+          description
+            "One port.";
+
+          leaf port {
+            type string;
+            description
+              "Interface name.";
+          }
+          leaf role {
+            type enumeration {
+              enum root;
+              enum designated;
+              enum alternate;
+              enum backup;
+            }
+            description
+              "Role the port plays.";
+          }
+          leaf state {
+            type enumeration {
+              enum disabled;
+              enum blocking;
+              enum listening;
+              enum discarding;
+              enum learning;
+              enum forwarding;
+            }
+            description
+              "Port state; the forward delay is driven by the injected clock.";
+          }
+          leaf priority {
+            type uint8 {
+              range "0..240";
+            }
+            description
+              "Port priority, a multiple of 16.";
+          }
+          leaf path-cost {
+            type uint32;
+            description
+              "Cost of the port's link.";
+          }
+          leaf edge-port {
+            type boolean;
+            description
+              "Whether the port is an edge (access) port.";
+          }
+        }
+      }
+    }
+  }
+
+  container lldp {
+    description
+      "LLDP: timers, the local chassis identity and the neighbour table.
+       TLVs are simplified and no LLDPDU is encoded on the wire.";
+
+    leaf enabled {
+      type boolean;
+      description
+        "Whether LLDP runs.";
+    }
+    leaf tx-interval {
+      type uint32 {
+        range "1..3600";
+      }
+      units "seconds";
+      description
+        "Interval between advertisements.";
+    }
+    leaf tx-hold-multiplier {
+      type uint32 {
+        range "2..10";
+      }
+      description
+        "Multiplier that derives the time to live from tx-interval.";
+    }
+    leaf reinit-delay {
+      type uint32 {
+        range "1..10";
+      }
+      units "seconds";
+      description
+        "Delay before a re-initialisation.";
+    }
+    leaf tx-delay {
+      type uint32 {
+        range "1..10";
+      }
+      units "seconds";
+      description
+        "Delay between the state change and the next advertisement.";
+    }
+    leaf chassis-id {
+      type string;
+      description
+        "Local chassis identifier.";
+    }
+    leaf system-name {
+      type string;
+      description
+        "Advertised system name.";
+    }
+    leaf system-description {
+      type string;
+      description
+        "Advertised system description.";
+    }
+
+    container neighbors {
+      description
+        "The neighbour table.";
+
+      list neighbor {
+        key "port";
+        description
+          "One neighbour seen on a port.";
+
+        leaf port {
+          type string;
+          description
+            "Local interface name.";
+        }
+        leaf chassis-id {
+          type string;
+          description
+            "Neighbour's chassis identifier.";
+        }
+        leaf port-id {
+          type string;
+          description
+            "Neighbour's port identifier.";
+        }
+        leaf system-name {
+          type string;
+          description
+            "Neighbour's system name.";
+        }
+        leaf system-description {
+          type string;
+          description
+            "Neighbour's system description.";
+        }
+        leaf ttl {
+          type uint32 {
+            range "1..65535";
+          }
+          units "seconds";
+          description
+            "Time to live of the last advertisement.";
+        }
+        leaf capabilities {
+          type string;
+          description
+            "Capability bits the neighbour advertises.";
+        }
+      }
+    }
+  }
+}
