@@ -72,7 +72,7 @@ const LLDPTTLMax uint32 = 65535
 // belongs to: a radio interface carries a RadioLink, an ethernet interface does
 // not. The counters are read-only.
 type Interface struct {
-	Name       string            `path:"name" xml:"name" json:"name"`
+	Name       string            `path:"name" key:"true" xml:"name" json:"name"`
 	Type       string            `path:"type" xml:"type" json:"type"`
 	Enabled    bool              `path:"enabled" xml:"enabled" json:"enabled"`
 	MTU        uint32            `path:"mtu" xml:"mtu" json:"mtu"`
@@ -96,7 +96,7 @@ type InterfaceCounters struct {
 
 // VLAN is one 802.1Q VLAN and its member ports.
 type VLAN struct {
-	ID          uint16     `path:"id" xml:"id" json:"id"`
+	ID          uint16     `path:"id" key:"true" xml:"id" json:"id"`
 	Name        string     `path:"name" xml:"name" json:"name"`
 	Description string     `path:"description" xml:"description,omitempty" json:"description,omitempty"`
 	Ports       []VLANPort `path:"ports/port" xml:"ports>port" json:"ports"`
@@ -104,7 +104,7 @@ type VLAN struct {
 
 // VLANPort is one member port of a VLAN.
 type VLANPort struct {
-	Port   string `path:"port" xml:"port" json:"port"`
+	Port   string `path:"port" key:"true" xml:"port" json:"port"`
 	Mode   string `path:"mode" xml:"mode" json:"mode"`
 	PVID   uint16 `path:"pvid" xml:"pvid" json:"pvid"`
 	Tagged bool   `path:"tagged" xml:"tagged" json:"tagged"`
@@ -112,7 +112,7 @@ type VLANPort struct {
 
 // MACEntry is one entry of the MAC forwarding database.
 type MACEntry struct {
-	MAC       string `path:"mac-address" xml:"mac-address" json:"mac-address"`
+	MAC       string `path:"mac-address" key:"true" xml:"mac-address" json:"mac-address"`
 	VLAN      uint16 `path:"vlan-id" xml:"vlan-id" json:"vlan-id"`
 	Port      uint32 `path:"port" xml:"port" json:"port"`
 	Type      string `path:"type" xml:"type" json:"type"`
@@ -133,7 +133,7 @@ type STPState struct {
 
 // STPPort is one bridge port of the STP/RSTP state.
 type STPPort struct {
-	Port     string `path:"port" xml:"port" json:"port"`
+	Port     string `path:"port" key:"true" xml:"port" json:"port"`
 	Role     string `path:"role" xml:"role" json:"role"`
 	State    string `path:"state" xml:"state" json:"state"`
 	Priority uint8  `path:"priority" xml:"priority" json:"priority"`
@@ -143,7 +143,7 @@ type STPPort struct {
 
 // LLDPNeighbor is one remote LLDP neighbour of an interface.
 type LLDPNeighbor struct {
-	Port              string `path:"port" xml:"port" json:"port"`
+	Port              string `path:"port" key:"true" xml:"port" json:"port"`
 	ChassisID         string `path:"chassis-id" xml:"chassis-id" json:"chassis-id"`
 	PortID            string `path:"port-id" xml:"port-id" json:"port-id"`
 	SystemName        string `path:"system-name" xml:"system-name,omitempty" json:"system-name,omitempty"`

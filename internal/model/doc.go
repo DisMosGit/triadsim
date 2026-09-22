@@ -11,4 +11,11 @@
 // radio objects in radio.go, and PTPClock, SyncEState, QL and ESMC in sync.go.
 // Validate enforces the documented ranges and enumerations; the accepted
 // values are exported as constants next to each type.
+//
+// Slice fields are model lists. The element field tagged key:"true" is the
+// list key, and the router addresses one element as
+// interfaces/interface[name=radio0] using the key field's path tag as the
+// predicate name. A path tag may name more than one segment
+// (interfaces/interface): the earlier parts are implicit containers and the
+// last part is the list or field itself.
 package model

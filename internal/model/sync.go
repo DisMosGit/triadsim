@@ -66,7 +66,7 @@ type SyncEState struct {
 
 // SyncEInterface is one SyncE-capable interface and its SSM state.
 type SyncEInterface struct {
-	Name          string `path:"name" xml:"name" json:"name"`
+	Name          string `path:"name" key:"true" xml:"name" json:"name"`
 	SSMEnabled    bool   `path:"ssm-enabled" xml:"ssm-enabled" json:"ssm-enabled"`
 	QL            QL     `path:"ql" xml:"ql" json:"ql"`
 	ExtendedQL    string `path:"extended-ql" xml:"extended-ql,omitempty" json:"extended-ql,omitempty"`

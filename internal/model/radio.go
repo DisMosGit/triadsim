@@ -84,7 +84,7 @@ type ACM struct {
 // ModProfile is one entry of the modulation-profile table: a modulation and
 // coding scheme with its receiver threshold and capacity.
 type ModProfile struct {
-	ID                 uint8   `path:"id" xml:"id" json:"id"`
+	ID                 uint8   `path:"id" key:"true" xml:"id" json:"id"`
 	Name               string  `path:"name" xml:"name" json:"name"`
 	Modulation         string  `path:"modulation" xml:"modulation" json:"modulation"`
 	CodingRate         string  `path:"coding-rate" xml:"coding-rate" json:"coding-rate"`
