@@ -3,6 +3,7 @@ package l2
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -21,6 +22,8 @@ var (
 	ErrMemberNotFound = errors.New("vlan member not found")
 	// ErrMACNotFound reports an unknown forwarding-database entry.
 	ErrMACNotFound = errors.New("mac entry not found")
+	// ErrInvalidMAC reports a MAC address that is not 48 bits.
+	ErrInvalidMAC = errors.New("invalid mac address")
 	// ErrTableFull reports a MAC table at its max-entries limit.
 	ErrTableFull = errors.New("mac table is full")
 )
@@ -61,6 +64,10 @@ type Manager struct {
 	// mu serialises the read-modify-write cycles of the background work
 	// (aging, LLDP refresh, counter bumps) and storm accounting.
 	mu sync.Mutex
+
+	// lastAging is the clock reading of the previous MAC-aging sweep. The zero
+	// value means no sweep has run yet.
+	lastAging time.Time
 }
 
 // New builds the L2 domain manager. It fails when no router is supplied.
@@ -85,6 +92,39 @@ func New(deps Deps) (*Manager, error) {
 // Clock exposes the manager's time source, which the periodic work and the
 // storm rate window share.
 func (m *Manager) Clock() clock.Clock { return m.clock }
+
+// Run performs the periodic domain work — MAC aging and the LLDP refresh —
+// until ctx is cancelled. Every period is scheduled on the injected clock, so
+// tests drive it with FakeClock and never sleep.
+func (m *Manager) Run(ctx context.Context) {
+	ticks := make(chan struct{}, 1)
+	for {
+		timer := m.clock.AfterFunc(m.tickInterval, func() {
+			select {
+			case ticks <- struct{}{}:
+			default:
+			}
+		})
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-ticks:
+			if err := m.Tick(ctx); err != nil {
+				slog.WarnContext(ctx, "l2: periodic tick failed", "error", err)
+			}
+		}
+	}
+}
+
+// Tick performs one period of background work and returns the joined error of
+// its steps.
+func (m *Manager) Tick(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.age(ctx)
+}
 
 // publish puts one event on the bus when a bus is configured.
 func (m *Manager) publish(kind event.EventType, resource, severity, message string) {
