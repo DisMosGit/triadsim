@@ -142,3 +142,45 @@ func TestSetStateWritesBothDatastores(t *testing.T) {
 	// Deleting an already absent state leaf is a no-op.
 	require.NoError(t, r.DeleteState(ctx, rssi))
 }
+
+// A template list entry whose stored leaves were all deleted disappears from
+// the snapshot, so a domain sees the datastore, not the boot template.
+func TestSnapshotDropsDeletedListEntry(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newTestRouter(t)
+
+	device, err := r.Snapshot(ctx, store.Running)
+	require.NoError(t, err)
+	require.Len(t, device.VLANs, 1)
+
+	leaves, err := r.List(ctx, store.Running, "vlans/vlan[id=100]")
+	require.NoError(t, err)
+	require.NotEmpty(t, leaves)
+	for _, leaf := range leaves {
+		require.NoError(t, r.Delete(ctx, store.Running, leaf.Path))
+	}
+
+	device, err = r.Snapshot(ctx, store.Running)
+	require.NoError(t, err)
+	assert.Empty(t, device.VLANs)
+
+	// Opening the list again through a writable leaf brings it back.
+	_, err = r.Set(ctx, store.Running, "vlans/vlan[id=100]/name", "DATA")
+	require.NoError(t, err)
+	device, err = r.Snapshot(ctx, store.Running)
+	require.NoError(t, err)
+	require.Len(t, device.VLANs, 1)
+	assert.Equal(t, "DATA", device.VLANs[0].Name)
+}
+
+// An empty datastore keeps the boot template, which is what validating a
+// freshly created candidate needs.
+func TestSnapshotOfEmptyDatastoreKeepsTemplate(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newTestRouter(t)
+
+	device, err := r.Snapshot(ctx, store.Startup)
+	require.NoError(t, err)
+	require.Len(t, device.VLANs, 1)
+	assert.Equal(t, uint16(100), device.VLANs[0].ID)
+}

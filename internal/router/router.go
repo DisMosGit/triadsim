@@ -450,17 +450,9 @@ func (r *Router) Bindings(ctx context.Context, ds store.Datastore) ([]Binding, e
 		return nil, err
 	}
 
-	paths, err := r.store.List(ctx, ds, "")
+	values, err := r.flatValues(ctx, ds)
 	if err != nil {
 		return nil, err
-	}
-	values := make(map[string]any, len(paths))
-	for _, path := range paths {
-		value, err := r.store.Get(ctx, ds, path)
-		if err != nil {
-			return nil, err
-		}
-		values[path] = value
 	}
 
 	device, err := r.deviceFromValues(values)
@@ -494,6 +486,38 @@ func (r *Router) Bindings(ctx context.Context, ds store.Datastore) ([]Binding, e
 		})
 	}
 	return bindings, nil
+}
+
+// Snapshot rebuilds the managed object from ds. The boot template supplies the
+// shape and the defaults of containers that are absent from the datastore, so
+// a domain always sees a complete, validated device.
+func (r *Router) Snapshot(ctx context.Context, ds store.Datastore) (*model.Device, error) {
+	values, err := r.flatValues(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
+	return r.deviceFromValues(values)
+}
+
+// flatValues reads every stored path of ds into a snapshot map.
+func (r *Router) flatValues(ctx context.Context, ds store.Datastore) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	paths, err := r.store.List(ctx, ds, "")
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]any, len(paths))
+	for _, path := range paths {
+		value, err := r.store.Get(ctx, ds, path)
+		if err != nil {
+			return nil, err
+		}
+		values[path] = value
+	}
+	return values, nil
 }
 
 // PathForOID returns the model path behind an exposed OID. A leading dot, as

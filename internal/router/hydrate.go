@@ -21,6 +21,12 @@ import (
 // VLAN created through RESTCONF, a MAC entry learned at runtime) therefore
 // produces a complete model.
 //
+// The datastore is authoritative for which list instances exist: pruneList
+// drops the template entries the map does not mention, so deleting every leaf
+// of an entry removes it from the snapshot. Only a completely empty map keeps
+// the whole template, which is what validating a fresh, unseeded datastore
+// needs.
+//
 // The map is permissive by design: it rebuilds whatever the store says. The
 // write path is what enforces the creatable list contract, in selectElement.
 func (r *Router) deviceFromValues(values map[string]any) (*model.Device, error) {
@@ -28,7 +34,12 @@ func (r *Router) deviceFromValues(values map[string]any) (*model.Device, error) 
 	if err != nil {
 		return nil, err
 	}
+	hydrator, err := newHydrator(values)
+	if err != nil {
+		return nil, err
+	}
 	root := reflect.ValueOf(device).Elem()
+	hydrator.pruneLists(root, "")
 
 	paths := make([]string, 0, len(values))
 	for path := range values {
@@ -41,11 +52,154 @@ func (r *Router) deviceFromValues(values map[string]any) (*model.Device, error) 
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		if err := assignPath(root, parsed.Segments, values[path]); err != nil {
+		if err := hydrator.assignPath(root, parsed.Segments, values[path]); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	return device, nil
+}
+
+// hydrator carries the datastore's list membership into the model rebuild.
+type hydrator struct {
+	// instances maps the model path of a list ("vlans/vlan") to the key values
+	// the datastore holds for it.
+	instances map[string]map[string]struct{}
+	// seeded reports whether the datastore holds any leaf at all. An unseeded
+	// datastore is not evidence that the configured lists are empty, so the
+	// boot template keeps supplying the shape.
+	seeded bool
+}
+
+// newHydrator collects the list instances the datastore holds.
+func newHydrator(values map[string]any) (*hydrator, error) {
+	h := &hydrator{
+		instances: make(map[string]map[string]struct{}),
+		seeded:    len(values) > 0,
+	}
+	for path := range values {
+		parsed, err := Parse(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		prefix := ""
+		for _, segment := range parsed.Segments {
+			if prefix == "" {
+				prefix = segment.Name
+			} else {
+				prefix += "/" + segment.Name
+			}
+			if segment.Key == "" {
+				continue
+			}
+			keys := h.instances[prefix]
+			if keys == nil {
+				keys = make(map[string]struct{})
+				h.instances[prefix] = keys
+			}
+			keys[segment.Value] = struct{}{}
+		}
+	}
+	return h, nil
+}
+
+// pruneLists walks the model subtree at path and drops the boot-template
+// entries of every list the datastore does not hold. It runs before the paths
+// are assigned, so an instance that lives only in the template disappears even
+// when no stored path passes through its list.
+func (h *hydrator) pruneLists(v reflect.Value, path string) {
+	if !h.seeded {
+		return
+	}
+	v, ok := derefValue(v)
+	if !ok {
+		return
+	}
+
+	switch v.Kind() {
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < t.NumField(); i++ {
+			tag, ok := t.Field(i).Tag.Lookup("path")
+			if !ok {
+				continue
+			}
+			h.pruneLists(v.Field(i), joinPath(path, tag))
+		}
+	case reflect.Slice:
+		h.pruneList(v, path)
+		for i := 0; i < v.Len(); i++ {
+			element := v.Index(i)
+			base, ok := derefValue(element)
+			if !ok {
+				continue
+			}
+			predicate, ok := keyPredicateOf(base)
+			if !ok {
+				h.pruneLists(element, path)
+				continue
+			}
+			h.pruneLists(element, path+"["+predicate+"]")
+		}
+	}
+}
+
+// joinPath appends a path tag to a prefix path.
+func joinPath(prefix, tag string) string {
+	if prefix == "" {
+		return tag
+	}
+	return prefix + "/" + tag
+}
+
+// pruneList drops the boot-template entries of a list that the datastore does
+// not hold. It is a no-op for an unseeded datastore.
+func (h *hydrator) pruneList(slice reflect.Value, path string) {
+	if !h.seeded {
+		return
+	}
+	base := slice.Type().Elem()
+	if base.Kind() == reflect.Pointer {
+		base = base.Elem()
+	}
+	if base.Kind() != reflect.Struct {
+		return
+	}
+	keyIndex := keyFieldIndex(base)
+	if keyIndex < 0 {
+		return
+	}
+
+	live := h.instances[path]
+	kept := reflect.MakeSlice(slice.Type(), 0, slice.Len())
+	for i := 0; i < slice.Len(); i++ {
+		element := slice.Index(i)
+		value, ok := derefValue(element)
+		if !ok {
+			continue
+		}
+		key, ok := derefValue(value.Field(keyIndex))
+		if !ok {
+			continue
+		}
+		if _, ok := live[scalarString(key)]; ok {
+			kept = reflect.Append(kept, element)
+		}
+	}
+	slice.Set(kept)
+}
+
+// keyPredicateOf returns the "key=value" predicate of a list element struct.
+func keyPredicateOf(element reflect.Value) (string, bool) {
+	t := element.Type()
+	index := keyFieldIndex(t)
+	if index < 0 {
+		return "", false
+	}
+	value, ok := derefValue(element.Field(index))
+	if !ok {
+		return "", false
+	}
+	return keyTagName(t) + "=" + scalarString(value), true
 }
 
 // cloneDevice deep-copies a device through its JSON representation. The copy
@@ -65,7 +219,7 @@ func cloneDevice(root *model.Device) (*model.Device, error) {
 // assignPath walks segs from an addressable root and stores value in the leaf
 // they address. Missing list entries are appended and nil pointer subtrees are
 // allocated, so the whole path becomes representable in the model.
-func assignPath(root reflect.Value, segs []Segment, value any) error {
+func (h *hydrator) assignPath(root reflect.Value, segs []Segment, value any) error {
 	current := root
 	index := 0
 
@@ -83,7 +237,8 @@ func assignPath(root reflect.Value, segs []Segment, value any) error {
 		if !found {
 			return fmt.Errorf("%w: %s", ErrNotFound, segs[index].Name)
 		}
-		last := segs[index+consumed-1]
+		lastIndex := index + consumed - 1
+		last := segs[lastIndex]
 		index += consumed
 
 		switch fieldValue.Kind() {
