@@ -2,6 +2,7 @@ package restconf
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,6 +51,11 @@ func TestStormEndpointRejectsBadRequests(t *testing.T) {
 			assert.Equal(t, test.status, response.Code)
 		})
 	}
+
+	// A body above the 1 MiB limit is rejected before it reaches the domain.
+	oversized := call(t, server, http.MethodPost, "/api/simulate/l2-storm", MediaTypeJSON,
+		`{"port":"`+strings.Repeat("x", 1<<20)+`"}`)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, oversized.Code)
 
 	// A wrong method is answered by the handler, not by the domain.
 	response := call(t, server, http.MethodPut, "/api/simulate/l2-storm", MediaTypeJSON, `{"port":"eth0"}`)

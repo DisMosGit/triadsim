@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -303,4 +304,15 @@ func TestDeleteListCollectionRemovesEntries(t *testing.T) {
 	vlans := body["sim-l2-switching:vlans"].(map[string]any)
 	// RFC 7951: a list with no entries is an empty array.
 	assert.Equal(t, []any{}, vlans["vlan"])
+}
+
+// A body above the 1 MiB limit is a 413, not a malformed message.
+func TestBodyAboveLimitIsTooLarge(t *testing.T) {
+	server := newTestServer(t, Options{})
+	target := "/restconf/data/sim-l2-switching:vlans/vlan=900/name"
+	body := strings.Repeat("x", 1<<20+1)
+
+	response := call(t, server, http.MethodPut, target, MediaTypeJSON, body)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
+	assert.Contains(t, response.Body.String(), "too-big")
 }

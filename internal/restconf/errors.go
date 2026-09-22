@@ -74,6 +74,10 @@ func notAcceptable(format string, args ...any) *httpError {
 	return newHTTPError(http.StatusNotAcceptable, errorTypeProtocol, "operation-not-supported", format, args...)
 }
 
+func tooLarge(format string, args ...any) *httpError {
+	return newHTTPError(http.StatusRequestEntityTooLarge, errorTypeProtocol, "too-big", format, args...)
+}
+
 func notImplemented(operation string) *httpError {
 	return newHTTPError(http.StatusNotImplemented, errorTypeProtocol, "operation-not-supported",
 		"%s is not implemented", operation)

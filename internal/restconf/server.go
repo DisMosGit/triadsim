@@ -305,6 +305,10 @@ func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request) (*ops.Payloa
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return nil, tooLarge("request body exceeds the %d byte limit", maxBodyBytes)
+		}
 		return nil, malformedRequest("reading the request body: %v", err)
 	}
 
@@ -350,6 +354,11 @@ func (s *Server) handleStorm(w http.ResponseWriter, r *http.Request) {
 		Packets uint32 `json:"packets"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&request); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			s.writeError(w, r, tooLarge("request body exceeds the %d byte limit", maxBodyBytes))
+			return
+		}
 		s.writeError(w, r, malformedRequest("malformed request body: %v", err))
 		return
 	}
