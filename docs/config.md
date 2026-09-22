@@ -14,7 +14,7 @@ make run CONFIG=configs/local.yaml     # configs/local*.yaml is gitignored
 |---|---|---|---|
 | `snmp.port` | int | `1161` | SNMP v2c agent port (community is fixed to `public`) |
 | `snmp.trap-port` | int | `1162` | destination port for traps (traps only, no informs) |
-| `netconf.port` | int | `830` | SSH subsystem `netconf`; any login/password is accepted |
+| `netconf.port` | int | `1830` | SSH subsystem `netconf`; any login/password is accepted |
 | `restconf.port` | int | `8080` | RESTCONF HTTP port; no authentication |
 | `metrics.port` | int | `9090` | Prometheus `/metrics` endpoint |
 | `gnmi.enabled` | bool | `false` | enables the optional gNMI service |
@@ -22,7 +22,8 @@ make run CONFIG=configs/local.yaml     # configs/local*.yaml is gitignored
 | `log.level` | string | `info` | `debug`, `info`, `warn` or `error` (case-insensitive) |
 | `startup.file` | string | `startup.json` | persisted startup datastore |
 
-All ports are unprivileged so the simulator runs without root.
+All ports are unprivileged so the simulator runs without root: NETCONF uses `1830` instead of the
+IANA `830`, and SNMP uses `1161` instead of `161`.
 
 ## Example
 
@@ -33,7 +34,7 @@ snmp:
   port: 1161
   trap-port: 1162
 netconf:
-  port: 830
+  port: 1830
 restconf:
   port: 8080
 metrics:

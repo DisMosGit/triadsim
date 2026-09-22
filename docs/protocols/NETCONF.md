@@ -1,611 +1,352 @@
-# NETCONF.md
+# NETCONF
 
-**Project:** TriadSim — Lightweight Telecom Equipment Simulator  
-**Protocol:** Network Configuration Protocol (NETCONF)  
-**Transport:** SSH (RFC 6242)  
-**Default Port:** 830/TCP  
-**Protocol Version:** 1.1 (RFC 6241)  
-**Base Capability:** `urn:ietf:params:netconf:base:1.1`
+**Protocol:** Network Configuration Protocol (RFC 6241) over SSH (RFC 6242)
+**Transport:** SSH subsystem `netconf`
+**Default port:** `1830/TCP` (see [Ports](#ports))
+**Capabilities:** `base:1.0`, `base:1.1`, `candidate:1.0`, `writable-running:1.0`
 
----
+## 1. Scope
 
-## 1. Introduction
+TriadSim implements the NETCONF base with the candidate datastore. This document describes
+exactly what the server does; the tables below are the contract the golden tests in
+`testdata/netconf/` verify.
 
-The Network Configuration Protocol (NETCONF) is an Internet Standards Track protocol defined in RFC 6241. It provides mechanisms to install, manipulate, and delete the configuration of network devices. It uses an Extensible Markup Language (XML)-based data encoding for the configuration data as well as the protocol messages. NETCONF protocol operations are realized as remote procedure calls (RPCs) .
-
-TriadSim implements NETCONF as one of its three northbound management interfaces, alongside SNMPv2c and RESTCONF. The NETCONF interface provides full CRUD (Create, Read, Update, Delete) operations on the simulated device's configuration datastores.
-
-The NETCONF implementation in TriadSim supports:
-
-- **Base protocol 1.1** with chunked framing (RFC 6242)
-- **Candidate datastore** with `commit`, `discard-changes`, and `confirmed-commit`
-- **Event notifications** via `create-subscription` (RFC 5277)
-- **Writable running** for direct configuration
-- **Rollback on error** and **validate** capabilities
-
----
-
-## 2. Protocol Overview
-
-### 2.1. Architecture
-
-NETCONF uses a client-server model over a secure transport:
-
-| Role | Entity | Description |
+| Operation | Status | Notes |
 |---|---|---|
-| **Client** | NMS, CLI, netopeer2-cli, custom scripts | Initiates NETCONF sessions, sends RPCs |
-| **Server** | TriadSim simulator | Processes RPCs, manages datastores, sends notifications |
+| `get-config` | implemented | `running`, `candidate`, `startup`; subtree filter |
+| `edit-config` | implemented | `merge`, `replace`, `create`, `delete`, `remove`; target `running` or `candidate` |
+| `commit` | implemented | validates, applies candidate to running, persists `startup.json`, publishes `ConfigChanged` |
+| `discard-changes` | implemented | restores candidate from running |
+| `close-session` | implemented | replies `<ok/>` and ends the session |
+| `confirmed-commit` (`<confirmed/>`, `<confirm-timeout>`, `<persist>`) | not implemented | Phase 3; the parameters get `operation-not-supported` |
+| `create-subscription`, notifications | not implemented | Phase 3 |
+| `get` | not implemented | state data is exposed over SNMP only |
+| `copy-config`, `delete-config`, `lock`, `unlock`, `kill-session`, `validate` | not implemented | `operation-not-supported` |
+| XPath filters | not implemented | `operation-not-supported`; only `type="subtree"` |
 
-The protocol is session-based. Each session begins with a capabilities exchange (`` exchange), after which the client and server can exchange `` and `` elements.
+`get-config` returns configuration data only: leaves tagged `config:"false"` in the model
+(measured levels, counters, uptime) are state, not configuration, and are never returned.
 
-### 2.2. Message Structure
+## 2. Ports
 
-NETCONF messages are XML documents. Every message uses the base namespace:
+| Port | Use |
+|---|---|
+| `1830` | SSH subsystem `netconf` (default in `configs/default.yaml`) |
 
-```xml
-<rpc message-id="101" 
-     xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <!-- operation -->
-</rpc>
+The IANA port `830` is privileged: binding it needs `root` or `CAP_NET_BIND_SERVICE`, which would
+break `make run` for a normal user. TriadSim therefore uses the unprivileged `1830`, exactly as
+the SNMP agent uses `1161` instead of `161`. Set `netconf.port` in the YAML configuration to use
+another port.
+
+## 3. SSH subsystem
+
+`internal/netconf/ssh.go` serves the subsystem with `golang.org/x/crypto/ssh`:
+
+- **No authentication.** Any user, password, public key or keyboard-interactive exchange is
+  accepted (`NoClientAuth`, plus permissive `password`/`publickey`/`keyboard-interactive`
+  callbacks). This is deliberate; see `AGENTS.md` (no auth anywhere).
+- **Ephemeral host key.** An ed25519 host key is generated at startup and never persisted, so
+  clients see a new key after every restart. Use `-o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null` in scripts.
+- **One session channel per connection.** Only `session` channels are accepted, and only the
+  `netconf` subsystem; any other channel type or subsystem is rejected.
+
+Connect with the subsystem name as the remote command (OpenSSH requires this position):
+
+```bash
+ssh -p 1830 -s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost netconf
 ```
 
-A corresponding reply:
+## 4. Hello and capabilities
 
-```xml
-<rpc-reply message-id="101"
-           xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <ok/>
-</rpc-reply>
-```
-
-The `` attribute is a string chosen by the sender and echoed by the receiver. All NETCONF XML elements are defined in the `urn:ietf:params:xml:ns:netconf:base:1.0` namespace, with protocol operation elements in the `urn:ietf:params:xml:ns:netconf:base:1.0` namespace as well.
-
-### 2.3. Transport: NETCONF over SSH
-
-NETCONF is transported over SSH as an SSH subsystem, as defined in RFC 6242. The SSH server must allow access to the `netconf` subsystem on the IANA-assigned TCP port 830 .
-
-TriadSim uses `golang.org/x/crypto/ssh` to implement the SSH server. The subsystem name is `netconf`. No authentication is enforced in the simulator — any username/password combination is accepted.
-
----
-
-## 3. Framing Protocol
-
-### 3.1. Overview
-
-RFC 6242 defines two framing mechanisms for NETCONF over SSH:
-
-| Framing | Capability | Delimiter |
-|---|---|---|
-| **End-of-message** | `:base:1.0` | `]]>]]>` |
-| **Chunked framing** | `:base:1.1` | Length-prefixed chunks |
-
-If both peers advertise `:base:1.1`, the chunked framing mechanism defined in Section 4.2 of RFC 6242 is used for the remainder of the NETCONF session . Otherwise, the end-of-message delimiter is used.
-
-### 3.2. Chunked Framing
-
-Chunked framing encodes each NETCONF message as a sequence of chunks. Each chunk has a length followed by the chunk data. The message ends with a zero-length chunk:
-
-```
-#<chunk-size>\n
-<chunk-data>
-##\n
-```
-
-For example, a message consisting of `hello` would be encoded as:
-
-```
-#10
-hello
-##
-```
-
-The chunked framing mechanism ensures that character sequences within XML elements are not misinterpreted as message boundaries .
-
-### 3.3. Capability Negotiation
-
-The client and server exchange `` elements immediately after the SSH connection is established. The `` element contains:
-
-- `` element with base capability
-- `` element with session ID
-- `` elements for each supported capability
-
-Example `` from TriadSim:
+The server sends its `<hello>` as soon as the subsystem starts, always with end-of-message
+framing, because framing is negotiated afterwards:
 
 ```xml
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <capabilities>
     <capability>urn:ietf:params:netconf:base:1.1</capability>
+    <capability>urn:ietf:params:netconf:base:1.0</capability>
     <capability>urn:ietf:params:netconf:capability:candidate:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:confirmed-commit:1.1</capability>
-    <capability>urn:ietf:params:netconf:capability:rollback-on-error:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:validate:1.1</capability>
-    <capability>urn:ietf:params:netconf:capability:notification:1.0</capability>
     <capability>urn:ietf:params:netconf:capability:writable-running:1.0</capability>
   </capabilities>
-  <session-id>42</session-id>
+  <session-id>1</session-id>
 </hello>
 ```
 
----
+- Only implemented capabilities are advertised: `confirmed-commit:1.1` and `notification:1.0`
+  are added by Phase 3 together with their implementation.
+- `session-id` is a monotonic counter starting at `1` for the first session of a run.
+- The client `<hello>` must advertise `base:1.0` or `base:1.1`; otherwise the server closes the
+  session.
+- **Framing negotiation:** if the client advertises `base:1.1` (and this server always does), the
+  rest of the session uses chunked framing. Otherwise end-of-message framing is used.
+- The client hello is sniffed: a client that starts with a chunk header (`#`) instead of `<` is
+  understood, even though RFC 6242 has both hellos use end-of-message framing.
 
-## 4. Capabilities
+## 5. Framing (RFC 6242 §4)
 
-TriadSim advertises the following NETCONF capabilities:
+Both mechanisms are implemented in `internal/netconf/framing.go`.
 
-| Capability | URN | Description |
-|---|---|---|
-| **Base 1.1** | `urn:ietf:params:netconf:base:1.1` | Protocol version 1.1 with chunked framing |
-| **Candidate** | `urn:ietf:params:netconf:capability:candidate:1.0` | Supports candidate datastore |
-| **Confirmed Commit 1.1** | `urn:ietf:params:netconf:capability:confirmed-commit:1.1` | Supports confirmed commit with cancel-commit and persist |
-| **Rollback on Error** | `urn:ietf:params:netconf:capability:rollback-on-error:1.0` | Supports automatic rollback on error |
-| **Validate 1.1** | `urn:ietf:params:netconf:capability:validate:1.1` | Supports configuration validation |
-| **Notification** | `urn:ietf:params:netconf:capability:notification:1.0` | Supports event notifications |
-| **Writable Running** | `urn:ietf:params:netconf:capability:writable-running:1.0` | Supports direct edits to running datastore |
+**End-of-message** (`base:1.0`): every message ends with the delimiter `]]>]]>`. The message
+itself must not contain that sequence.
 
-The `:candidate` capability indicates that the device supports a candidate configuration datastore, which is used to hold configuration data that can be manipulated without impacting the device's current configuration .
+```
+<rpc message-id="1"><get-config><source><running/></source></get-config></rpc>]]>]]>
+```
 
----
+**Chunked** (`base:1.1`): a message is one or more chunks followed by end-of-chunks. The chunk
+size is **hexadecimal**:
 
-## 5. Datastores
+```
+chunk           = "\n" "#" chunk-size "\n" chunk-data
+end-of-chunks   = "\n" "##" "\n"
+```
 
-NETCONF defines several configuration datastores. TriadSim implements the following:
+The message `<rpc/>` is therefore sent as (the first byte is the LF that precedes the chunk
+header):
 
-| Datastore | Description | Persistence |
-|---|---|---|
-| **running** | Active configuration currently in use | In-memory |
-| **candidate** | Work-in-progress copy of running | In-memory |
-| **startup** | Configuration loaded at boot | `startup.json` on disk |
+```
 
-### 5.1. Running
+#6
+<rpc/>
+##
+```
 
-The `running` datastore holds the complete configuration currently active on the device. Changes to `running` take effect immediately. In TriadSim, the running datastore is stored as a `map[string]any` keyed by model path.
+One message is limited to 16 MiB: a message that exceeds the limit is answered with `too-big` and
+ends the session. Broken framing is answered with `malformed-message` before the session ends.
 
-### 5.2. Candidate
+## 6. Data model
 
-The `candidate` datastore is a temporary workspace where configuration changes can be made without affecting the running configuration. Changes made to `candidate` are committed to `running` using the `` operation .
+The XML data tree mirrors the runtime managed-object model: an element name is a router path
+segment, and nesting is path nesting. The data root is the device, so `<config>` and `<data>`
+contain the top-level containers `system-info` and `interfaces`.
 
-The workflow is:
+| XML | Router path |
+|---|---|
+| `<system-info>` | `system-info` |
+| `<system-info><device-id>` | `system-info/device-id` |
+| `<interfaces><interface><name>radio0</name>` | `interfaces/interface[name=radio0]` |
+| `<interfaces><interface><name>radio0</name><radio-link><tx-power>` | `interfaces/interface[name=radio0]/radio-link/tx-power` |
+| `…<modulation-profile><id>5</id>` | `…/radio-link/modulation-profile[id=5]` |
 
-1. `` with `` target
-2. `` to validate and apply changes
-3. `` to discard uncommitted changes
+Rules:
 
-### 5.3. Startup
+- **Lists** carry their key as a child leaf, and the key leaf is always encoded first
+  (`<interface><name>radio0</name>…`). A list entry in `<config>` must contain its key; a
+  missing key is `missing-element`.
+- **Namespaces** are ignored when parsing: elements are matched by local name. On output each
+  module subtree declares its namespace once: `urn:sim:device` for `system-info`, `interfaces`,
+  `interface` and `counters`, `urn:sim:radio-link` for `radio-link`, `modulation-profile` and
+  everything below them. The envelope uses `urn:ietf:params:xml:ns:netconf:base:1.0`.
+- **Values** are XML character data: booleans are `true`/`false`, numbers are decimal, a
+  `float64` leaf is printed with the shortest exact representation (`22.5`, `1500`). A value that
+  does not fit its model type is `invalid-value`.
+- The device topology is fixed by the model template (`radio0`, `eth0`, `eth1`, 12 modulation
+  profiles). Unknown interfaces, unknown nodes and `radio-link` under a non-radio interface are
+  `unknown-element`.
 
-The `startup` datastore holds the configuration that was loaded when the device booted. When the device restarts, `startup` is loaded into `running`. TriadSim persists `startup` as `startup.json` on disk using `encoding/json`.
+## 7. Operations
 
----
-
-## 6. Protocol Operations
-
-TriadSim supports the following NETCONF operations, as defined in RFC 6241:
-
-### 6.1. get-config
-
-Retrieves all or part of a specified configuration datastore.
+### 7.1. get-config
 
 ```xml
-<rpc message-id="101" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+<rpc message-id="3" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <get-config>
     <source><running/></source>
     <filter type="subtree">
-      <radio-link xmlns="urn:sim:radio-link">
-        <name>radio0</name>
-      </radio-link>
+      <interfaces>
+        <interface>
+          <name>radio0</name>
+          <radio-link><tx-power/></radio-link>
+        </interface>
+      </interfaces>
     </filter>
   </get-config>
 </rpc>
 ```
 
-Positive response contains `` with the requested data. Negative response contains `` with an error-tag.
-
-### 6.2. edit-config
-
-Loads all or part of a configuration into a target datastore. The `` operation supports multiple operation types:
-
-| Operation | Description |
-|---|---|
-| **merge** | Merge configuration with target (default) |
-| **replace** | Completely replace target configuration |
-| **create** | Create configuration, error if exists |
-| **delete** | Delete configuration, error if missing |
-| **remove** | Delete configuration, no error if missing |
-
-The `merge` behavior: the configuration data in the `` parameter is merged with the configuration at the corresponding level in the target datastore. This is the default behavior .
-
-Example:
+Reply (end-of-message framing shown):
 
 ```xml
-<rpc message-id="102" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <edit-config>
-    <target><candidate/></target>
-    <config>
-      <radio-link xmlns="urn:sim:radio-link">
+<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="3">
+  <data>
+    <interfaces xmlns="urn:sim:device">
+      <interface>
         <name>radio0</name>
-        <tx-power>20.0</tx-power>
-        <atpc>
-          <enabled>true</enabled>
-          <target-rssi>-45.0</target-rssi>
-        </atpc>
-        <acm>
-          <enabled>true</enabled>
-        </acm>
-      </radio-link>
-    </config>
-  </edit-config>
-</rpc>
+        <radio-link xmlns="urn:sim:radio-link"><tx-power>21.5</tx-power></radio-link>
+      </interface>
+    </interfaces>
+  </data>
+</rpc-reply>]]>]]>
 ```
 
-The `` element also supports `` and ``:
-
-- **error-option**: `stop-on-error` (default), `continue-on-error`, `rollback-on-error`
-- **test-option**: `test-then-set` (default), `set`, `test-only`
-
-### 6.3. copy-config
-
-Creates or replaces an entire configuration datastore with the contents of another.
-
-```xml
-<rpc message-id="103" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <copy-config>
-    <target><startup/></target>
-    <source><running/></source>
-  </copy-config>
-</rpc>
-```
-
-### 6.4. delete-config
-
-Deletes a configuration datastore. The `running` datastore cannot be deleted.
-
-```xml
-<rpc message-id="104" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <delete-config>
-    <target><startup/></target>
-  </delete-config>
-</rpc>
-```
-
-### 6.5. lock / unlock
-
-The `` operation allows a client to lock a datastore so that only the session holding the lock can modify it. The `` operation releases the lock.
-
-```xml
-<rpc message-id="105" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <lock>
-    <target><candidate/></target>
-  </lock>
-</rpc>
-```
-
-Locks are important for shared configurations: the configuration locking feature should be used to prevent inadvertent alteration of changes made by other sessions .
-
-### 6.6. commit
-
-The `` operation commits the candidate configuration to the running configuration.
-
-**Basic commit:**
-
-```xml
-<rpc message-id="106" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <commit/>
-</rpc>
-```
-
-**Confirmed commit:**
-
-A confirmed `` operation must be reverted if a confirming commit is not issued within the timeout period (by default 600 seconds = 10 minutes) .
-
-```xml
-<rpc message-id="107" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <commit>
-    <confirmed/>
-    <confirm-timeout>30</confirm-timeout>
-  </commit>
-</rpc>
-```
-
-The confirming commit is a `` operation without the `` parameter. If the session issuing the confirmed commit is terminated before the confirm timeout expires, the server must restore the configuration to its state before the confirmed commit was issued .
-
-**Cancel commit:**
-
-To cancel a confirmed commit and revert changes without waiting for the timeout, the client uses the `` operation :
-
-```xml
-<rpc message-id="108" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <cancel-commit/>
-</rpc>
-```
-
-### 6.7. discard-changes
-
-Discards all uncommitted changes in the candidate datastore.
-
-```xml
-<rpc message-id="109" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <discard-changes/>
-</rpc>
-```
-
-### 6.8. validate
-
-Validates the contents of a configuration datastore.
-
-```xml
-<rpc message-id="110" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <validate>
-    <source><candidate/></source>
-  </validate>
-</rpc>
-```
-
-TriadSim calls each model's `Validate() error` method to validate configuration. Invalid values result in an `` with `error-tag` = `invalid-value`.
-
-### 6.9. close-session / kill-session
-
-The `` operation gracefully terminates the NETCONF session. The `` operation forcefully terminates another session.
-
-```xml
-<rpc message-id="111" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <close-session/>
-</rpc>
-```
-
----
-
-## 7. Event Notifications
-
-### 7.1. Overview
-
-NETCONF Event Notifications, defined in RFC 5277, provide an asynchronous message notification delivery service for NETCONF. This is an optional capability built on top of the base NETCONF definition .
-
-TriadSim implements the notification capability with a single event stream named `sim-events`.
-
-### 7.2. Subscribing
-
-The client subscribes using the `` operation:
-
-```xml
-<rpc message-id="112" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <create-subscription xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0">
-    <stream>sim-events</stream>
-  </create-subscription>
-</rpc>
-```
-
-The server responds with ``. After subscription, the server sends `` elements asynchronously:
-
-```xml
-<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0">
-  <eventTime>2024-01-15T10:30:00Z</eventTime>
-  <event xmlns="urn:sim:events">
-    <radio-link-down>
-      <link>radio0</link>
-      <severity>major</severity>
-      <rssi>-82.5</rssi>
-      <fade-margin>2.1</fade-margin>
-    </radio-link-down>
-  </event>
-</notification>
-```
-
-### 7.3. Event Stream
-
-The `sim-events` stream contains all event notifications supported by TriadSim:
-
-| Event | Description |
-|---|---|
-| `radio-link-down` | Radio link failure or fade margin below threshold |
-| `radio-link-up` | Radio link restored |
-| `sync-holdover` | PTP transitioned to holdover state |
-| `sync-restored` | PTP source restored, transitioned to master |
-| `l2-storm-detected` | Broadcast storm threshold exceeded |
-| `config-changed` | Running configuration modified |
-
-### 7.4. Terminating Subscription
-
-Subscriptions are terminated by closing the session or by using the `` operation. There is no explicit unsubscribe operation in RFC 5277; the subscription ends when the session ends .
-
----
-
-## 8. Error Handling
-
-### 8.1. RPC Error Format
-
-When an operation fails, the server returns an `` element containing an ``:
-
-```xml
-<rpc-reply message-id="102" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <rpc-error>
-    <error-type>protocol</error-type>
-    <error-tag>invalid-value</error-tag>
-    <error-severity>error</error-tag>
-    <error-message>tx-power out of range: 999</error-message>
-  </rpc-error>
-</rpc-reply>
-```
-
-### 8.2. Error Tags
-
-TriadSim uses the following error tags (from RFC 6241 Section 7.5.3):
-
-| Error Tag | Description |
-|---|---|
-| `invalid-value` | Value fails validation |
-| `missing-element` | Required element missing |
-| `unknown-element` | Unrecognized element |
-| `data-exists` | Create failed, data already exists |
-| `data-missing` | Delete/remove failed, data missing |
-| `operation-failed` | Operation failed for another reason |
-| `lock-denied` | Datastore locked by another session |
-| `in-use` | Resource in use |
-
-### 8.3. Rollback on Error
-
-When `` with `rollback-on-error` is used, if an error condition occurs such that an error severity `` element is generated, the server stops processing the `` operation and restores the specified configuration to its complete state at the start of this `` operation .
-
----
-
-## 9. User-Flow Examples
-
-### 9.1. Connecting
-
-```bash
-ssh -p 830 -s netconf admin@localhost
-```
-
-The server responds with ``:
-
-```xml
-<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <capabilities>
-    <capability>urn:ietf:params:netconf:base:1.1</capability>
-    <capability>urn:ietf:params:netconf:capability:candidate:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:confirmed-commit:1.1</capability>
-    <capability>urn:ietf:params:netconf:capability:notification:1.0</capability>
-  </capabilities>
-  <session-id>42</session-id>
-</hello>
-```
-
-### 9.2. Configure Radio Link
+- `<source>` is mandatory and accepts `<running/>`, `<candidate/>` or `<startup/>`. `startup`
+  reflects the last committed and persisted configuration.
+- `<filter>` is optional. Without it the whole configuration is returned, in model declaration
+  order (key leaves first, list entries ordered by key, numerically for numeric keys).
+- Simplified **subtree filter** semantics:
+  - a container element selects its whole subtree, or only the children it names;
+  - a list element with a key child leaf selects that entry (content match); without a key it
+    selects every entry;
+  - a leaf element without text selects the leaf; with text it also requires that value;
+  - an element name that is not in the model is `unknown-element`.
+- No match yields an empty `<data/>`.
+- `type="xpath"` is rejected with `operation-not-supported`.
+
+### 7.2. edit-config
 
 ```xml
 <rpc message-id="1" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <edit-config>
     <target><candidate/></target>
     <config>
-      <radio-link xmlns="urn:sim:radio-link">
-        <name>radio0</name>
-        <tx-power>20.0</tx-power>
-        <atpc><enabled>true</enabled><target-rssi>-45.0</target-rssi></atpc>
-        <acm><enabled>true</enabled></acm>
-      </radio-link>
+      <interfaces>
+        <interface>
+          <name>radio0</name>
+          <radio-link>
+            <tx-power>22.5</tx-power>
+            <atpc><target-rsl>-50</target-rsl></atpc>
+          </radio-link>
+        </interface>
+      </interfaces>
     </config>
   </edit-config>
-</rpc>
-
-<rpc message-id="2" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <commit/>
-</rpc>
-
-<rpc message-id="3" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <get-config>
-    <source><running/></source>
-    <filter type="subtree">
-      <radio-link xmlns="urn:sim:radio-link"><name>radio0</name></radio-link>
-    </filter>
-  </get-config>
 </rpc>
 ```
 
-### 9.3. Discard Invalid Configuration
+- `<target>` is mandatory: `running` (the `writable-running` capability) or `candidate`.
+  `startup` is rejected — a commit is what persists startup.
+- `<default-operation>`: `merge` (default), `replace` or `none`.
+- Operation attributes are matched by local name, so both `operation="merge"` and
+  `nc:operation="merge"` work:
+
+| Operation | Container or list entry | Leaf |
+|---|---|---|
+| `merge` (default) | children are merged | value is set |
+| `replace` | the subtree is cleared first, then the children are written | value is set |
+| `create` | `data-exists` when the subtree already holds configuration data | `data-exists` when the leaf exists |
+| `delete` | clears the subtree, `data-missing` when it is empty | `data-missing` when the leaf is absent |
+| `remove` | clears the subtree, silent when it is empty | silent when the leaf is absent |
+
+- `test-option` accepts `test-then-set` (default) and `set`; `test-only` is
+  `operation-not-supported`. `error-option` accepts `stop-on-error` (default);
+  `continue-on-error` and `rollback-on-error` are `operation-not-supported`.
+- **Whole-edit validation.** The edits are applied to a snapshot of the target datastore, the
+  snapshot is validated with the same validator `commit` uses, and only then is the difference
+  written back. A rejected edit — an out-of-range value, a missing mandatory sibling — returns
+  `invalid-value` and leaves the datastore untouched, so `discard-changes` is never needed to
+  undo a failed `edit-config`.
+- **State leaves are protected.** A write to a leaf tagged `config:"false"` is `access-denied`,
+  and a subtree `replace`/`delete` never removes state leaves, so counters and measured levels
+  survive any configuration edit.
+- Writing to `running` takes effect immediately but is not persisted until a `commit` (the
+  simulator has no separate `startup` write operation in this phase).
+
+### 7.3. commit
 
 ```xml
-<rpc message-id="4" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <edit-config>
-    <target><candidate/></target>
-    <config>
-      <radio-link xmlns="urn:sim:radio-link">
-        <name>radio0</name>
-        <tx-power>999</tx-power>
-      </radio-link>
-    </config>
-  </edit-config>
-</rpc>
+<rpc message-id="2" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><commit/></rpc>
+```
 
-<rpc-reply message-id="4" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+`commit` validates the candidate, applies it to running, writes `startup.json`, and publishes a
+`ConfigChanged` event on the event bus (which Phase 6 turns into a notification and a metric).
+`<source><candidate/></source>` is accepted explicitly; other sources and the confirmed-commit
+parameters are `operation-not-supported`. A candidate the model rejects is `invalid-value`, and
+the running datastore, the startup datastore and the file then stay untouched.
+
+### 7.4. discard-changes
+
+```xml
+<rpc message-id="4" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><discard-changes/></rpc>
+```
+
+Copies running back into candidate, discarding every uncommitted change.
+
+### 7.5. close-session
+
+Replies `<ok/>` and closes the SSH session channel. There is no explicit unsubscribe or
+`kill-session`; sessions end when the client disconnects.
+
+## 8. Errors
+
+Failures are reported as `<rpc-error>` inside the reply:
+
+```xml
+<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="4">
   <rpc-error>
     <error-type>protocol</error-type>
     <error-tag>invalid-value</error-tag>
     <error-severity>error</error-severity>
-    <error-message>tx-power out of range: 999</error-message>
+    <error-message>router: validate: interfaces[0]: interface radio0: radio-link: radio-link radio0: tx-power 999.0 out of range -10..30 dBm</error-message>
   </rpc-error>
 </rpc-reply>
-
-<rpc message-id="5" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <discard-changes/>
-</rpc>
 ```
 
-### 9.4. Subscribe to Notifications
+| Situation | `error-type` | `error-tag` |
+|---|---|---|
+| Malformed XML, broken framing, oversized message | `rpc` | `malformed-message`, `too-big` |
+| Missing `message-id` | `rpc` | `missing-attribute` |
+| Missing `<source>`, `<target>`, `<config>` or a list key | `protocol` | `missing-element` |
+| Element or list key not in the data model | `protocol` | `unknown-element` |
+| Value not parseable, or rejected by the model | `protocol` | `invalid-value` |
+| Write to a `config:"false"` node | `protocol` | `access-denied` |
+| `create` where configuration data exists | `protocol` | `data-exists` |
+| `delete` where configuration data is missing | `protocol` | `data-missing` |
+| Unknown operation, unsupported option or XPath filter | `protocol` | `operation-not-supported` |
+| Store or persistence failure | `application` | `operation-failed` |
 
-```xml
-<rpc message-id="6" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <create-subscription xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0">
-    <stream>sim-events</stream>
-  </create-subscription>
-</rpc>
+A message that cannot be parsed — malformed XML, a missing `message-id`, or a root element that
+is not `<rpc>` — is answered with the error and then ends the session, as RFC 6241 §7.1 requires.
+Other errors leave the session open.
+
+## 9. Walkthrough
+
+The transcript below is an actual session, recorded (with the response omitted for brevity) in
+`testdata/netconf/edit-config.xml` and replayed by the golden test:
+
+```
+$ ssh -p 1830 -s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost netconf
+<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability></capabilities><session-id>7</session-id></hello>]]>]]>
+<rpc message-id="1" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><edit-config><target><candidate/></target><config><interfaces><interface><name>radio0</name><radio-link><tx-power>22.5</tx-power><atpc><target-rsl>-50</target-rsl></atpc><acm><min-profile>2</min-profile></acm></radio-link></interface></interfaces></config></edit-config></rpc>]]>]]>
+<rpc message-id="2" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><commit/></rpc>]]>]]>
+<rpc message-id="3" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-config><source><running/></source><filter><interfaces><interface><name>radio0</name><radio-link><tx-power/><atpc><target-rsl/></atpc><acm><min-profile/></acm></radio-link></interface></interfaces></filter></get-config></rpc>]]>]]>
+<rpc message-id="4" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><edit-config><target><candidate/></target><config><interfaces><interface><name>radio0</name><radio-link><tx-power>999</tx-power></radio-link></interface></interfaces></config></edit-config></rpc>]]>]]>
+<rpc message-id="5" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-config><source><candidate/></source><filter><interfaces><interface><name>radio0</name><radio-link><tx-power/></radio-link></interface></interfaces></filter></get-config></rpc>]]>]]>
+<rpc message-id="6" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><close-session/></rpc>]]>]]>
 ```
 
-After subscription, the client receives notifications as events occur:
+The server answers with its hello, `<ok/>` for RPC 1 and 2, the committed `22.5` for RPC 3, an
+`invalid-value` error for RPC 4, the unchanged `22.5` for RPC 5 and `<ok/>` for RPC 6. The full
+responses are in `testdata/netconf/edit-config.golden.xml`.
 
-```xml
-<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0">
-  <eventTime>2024-01-15T10:30:00Z</eventTime>
-  <event xmlns="urn:sim:events">
-    <radio-link-down>
-      <link>radio0</link>
-      <severity>major</severity>
-    </radio-link-down>
-  </event>
-</notification>
+Sessions share one candidate datastore and there is no `lock`/`unlock` in this phase: with
+concurrent sessions the last write wins.
+
+## 10. Tests
+
+Golden transcripts live in `testdata/netconf/`:
+
+| File | Contents |
+|---|---|
+| `edit-config.xml` / `.golden.xml` | hello, edit-config, commit, get-config round trip, rejected invalid-value edit |
+| `get-config.xml` / `.golden.xml` | hello, subtree filters, namespace handling, XPath rejection, `startup` source |
+
+They are replayed through the real session code and framing by `internal/netconf/golden_test.go`.
+Regenerate them after an intentional change and review the diff:
+
+```bash
+go test ./internal/netconf -update
 ```
 
----
+Unit and session tests cover the SSH subsystem, hello negotiation, both framing mechanisms, RPC
+parsing, all five edit operations, validation, error mapping and the event publication.
 
-## 10. References
+## 11. References
 
 | Document | Title |
 |---|---|
-| **RFC 6241** | Network Configuration Protocol (NETCONF)  |
-| **RFC 6242** | Using the NETCONF Protocol over Secure Shell (SSH)  |
-| **RFC 5277** | NETCONF Event Notifications  |
-| **RFC 4741** | NETCONF Configuration Protocol (obsoleted by RFC 6241) |
-| **RFC 4742** | Using the NETCONF Protocol over SSH (obsoleted by RFC 6242) |
-| **RFC 6020** | YANG — A Data Modeling Language for NETCONF |
-| **RFC 7950** | The YANG 1.1 Data Modeling Language |
-| **RFC 8342** | Network Management Datastore Architecture (NMDA) |
-
----
-
-## Appendix A: Capability URNs
-
-| Capability | URN |
-|---|---|
-| Base 1.1 | `urn:ietf:params:netconf:base:1.1` |
-| Candidate | `urn:ietf:params:netconf:capability:candidate:1.0` |
-| Confirmed Commit 1.1 | `urn:ietf:params:netconf:capability:confirmed-commit:1.1` |
-| Rollback on Error | `urn:ietf:params:netconf:capability:rollback-on-error:1.0` |
-| Validate 1.1 | `urn:ietf:params:netconf:capability:validate:1.1` |
-| Notification | `urn:ietf:params:netconf:capability:notification:1.0` |
-| Writable Running | `urn:ietf:params:netconf:capability:writable-running:1.0` |
-
----
-
-## Appendix B: NETCONF Subsystem Startup
-
-The NETCONF subsystem is started when the client requests the `netconf` SSH subsystem. The server:
-
-1. Accepts the SSH connection on port 830.
-2. Processes the `subsystem` request with name `netconf`.
-3. Sends `` with capabilities and session ID.
-4. Receives client ``.
-5. Enters the RPC loop, processing `` elements until session close.
-
-The SSH server must default to allowing access to the `netconf` SSH subsystem only when using the specific TCP port assigned by IANA (830) .
-
----
-
-## Appendix C: TriadSim YANG Modules
-
-TriadSim does not parse YANG files at runtime. Instead, it uses Go structs with `path` tags for navigation. However, the following YANG modules are provided as documentation for clients:
-
-| Module | Namespace | Purpose |
-|---|---|---|
-| `sim-device` | `urn:sim:device` | Device identity, system info |
-| `sim-radio-link` | `urn:sim:radio-link` | Radio link configuration and state |
-| `sim-l2-switching` | `urn:sim:l2-switching` | VLAN, MAC table, STP, LLDP |
-| `sim-sync` | `urn:sim:sync` | PTP, SyncE, holdover |
-
-These YANG modules are embedded in the binary via `//go:embed` and served through the CLI `simulator schema --yang` command. They are not used for runtime validation.
+| RFC 6241 | Network Configuration Protocol (NETCONF) |
+| RFC 6242 | Using the NETCONF Protocol over Secure Shell (SSH) |
+| RFC 5277 | NETCONF Event Notifications |
+| RFC 7950 | The YANG 1.1 Data Modeling Language (list key encoding, XML representation) |

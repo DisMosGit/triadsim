@@ -16,7 +16,7 @@ Index of the TriadSim documentation. Start with the architecture, then the subsy
 | Document | Contents |
 |---|---|
 | [protocols/SNMP.md](protocols/SNMP.md) | SNMP v2c, community `public`, OID tree, vendor OIDs, traps, examples |
-| [protocols/NETCONF.md](protocols/NETCONF.md) | SSH subsystem, hello, framing, `edit-config`/`get-config`/`commit`, notifications |
+| [protocols/NETCONF.md](protocols/NETCONF.md) | SSH subsystem, hello, EOM/chunked framing, `get-config`/`edit-config`/`commit`/`discard-changes`, errors, walkthrough |
 | [protocols/RESTCONF.md](protocols/RESTCONF.md) | URL structure, media types, methods, error codes, `curl` examples |
 | [protocols/RADIO-RRL.md](protocols/RADIO-RRL.md) | RRL link budget, RSSI, ATPC, ACM, modulation profiles, fade margin, alarms |
 | [protocols/L2.md](protocols/L2.md) | 802.1Q, QinQ, MAC table, STP/RSTP (simplified), LLDP, counters, MIB mapping |

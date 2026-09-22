@@ -27,7 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `start` now builds the store, router and seed device, loads `startup.json`, seeds on the first boot and serves the SNMP and Prometheus endpoints until SIGINT/SIGTERM.
 - Tooling: `scripts/check.sh`, `scripts/demo.sh` (stub) and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
 - Documentation: `docs/README.md` (index), `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/protocols/SNMP.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
+- `internal/router`: type-driven schema tree (`Node`, `Children`) that maps protocol element trees onto router paths.
+- `internal/netconf`: SSH subsystem `netconf` with an ephemeral ed25519 host key and no authentication, one NETCONF session per channel with a monotonic session-id.
+- `internal/netconf`: `<hello>` exchange, capability advertisement (`base:1.0`, `base:1.1`, `candidate`, `writable-running`) and framing negotiation.
+- `internal/netconf`: end-of-message and chunked framing with hex chunk sizes, size limits, malformed-frame detection and first-byte sniffing of the client hello.
+- `internal/netconf`: `<rpc>`/`<rpc-reply>`/`<rpc-error>` handling, operation dispatch and the RFC 6241 error-tag mapping.
+- `internal/netconf/ops`: `get-config` for running/candidate/startup with subtree filters (key, subtree and content match) and module namespaces on output.
+- `internal/netconf/ops`: `edit-config` with `merge`, `replace`, `create`, `delete`, `remove`, `<default-operation>` and `nc:operation` attributes, validated as a whole before anything is written.
+- `internal/netconf/ops`: `commit` (validate, apply to running, persist `startup.json`, publish `ConfigChanged`) and `discard-changes`.
+- `start` now also serves the NETCONF subsystem; the default port is the unprivileged `1830` instead of the privileged IANA `830`.
+- Golden NETCONF transcripts in `testdata/netconf/` replayed by `internal/netconf/golden_test.go`; regenerate with `go test ./internal/netconf -update`.
+- Documentation: `docs/protocols/NETCONF.md` rewritten for the implemented operations, framing, data model, error tags and a full walkthrough.
 
 ### Notes
 
-- Phase 1 is complete: the SNMP walk returns `ifDescr` and the vendor RSSI OID, and `/metrics` serves the simulator counters. NETCONF, RESTCONF, gNMI and the radio/L2/sync domain logic land in Phases 2–7. See [ROADMAP.md](ROADMAP.md).
+- Phase 2 is complete: `ssh -p 1830 -s admin@localhost netconf` works, and `edit-config` → `commit` → `get-config` round-trips against the stored configuration. Phase 1 delivered the SNMP walk (`ifDescr` plus the vendor RSSI OID) and `/metrics`. RESTCONF, gNMI, confirmed-commit, notifications and the radio/L2/sync domain logic land in Phases 3–7. See [ROADMAP.md](ROADMAP.md).

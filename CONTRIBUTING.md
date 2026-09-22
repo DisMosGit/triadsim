@@ -51,7 +51,8 @@ go run ./cmd/simulator dump --format json
 go run ./cmd/simulator alarm inject --type radioLinkDown --link radio0
 ```
 
-Ports: SNMP `1161`, traps `1162`, NETCONF `830`, RESTCONF `8080`, metrics `9090`, gNMI `9339` (optional).
+Ports: SNMP `1161`, traps `1162`, NETCONF `1830` (unprivileged, not the IANA `830`), RESTCONF
+`8080`, metrics `9090`, gNMI `9339` (optional).
 
 ## Pull requests
 

@@ -12,10 +12,11 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 1 — SNMP v2c walk.** The repository builds, tests and starts; the foundations,
-> managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router
-> and the SNMP v2c agent with the Prometheus endpoint are in place. NETCONF, RESTCONF and the
-> domain logic land in Phases 2–7; see [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 2 — NETCONF base.** The repository builds, tests and starts; the foundations,
+> managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router,
+> the SNMP v2c agent with the Prometheus endpoint and the NETCONF subsystem with
+> `get-config`/`edit-config`/`commit`/`discard-changes` are in place. RESTCONF, the domain logic,
+> confirmed-commit and notifications land in Phases 3–7; see [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 
@@ -33,6 +34,9 @@ go run ./cmd/simulator start --config configs/default.yaml
 snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2   # radio0, eth0, eth1
 snmpget  -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.1.0  # RSSI as a float
 curl -s localhost:9090/metrics | grep simulator_
+
+# and the NETCONF subsystem on :1830 (any user, no password)
+ssh -p 1830 -s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost netconf
 ```
 
 Configuration lives in [`configs/default.yaml`](configs/default.yaml); every field has a
@@ -44,19 +48,24 @@ documented default and is described in [docs/config.md](docs/config.md).
 |---|---|---|
 | SNMP agent | `1161` | v2c, community `public` |
 | SNMP traps | `1162` | traps only, no informs |
-| NETCONF | `830` | SSH subsystem `netconf`, no auth |
+| NETCONF | `1830` | SSH subsystem `netconf`, no auth |
 | RESTCONF | `8080` | no auth |
 | Prometheus `/metrics` | `9090` | |
 | gNMI (optional) | `9339` | disabled by default, TLS off |
 
-Ports are deliberately unprivileged so the simulator runs without root.
+Ports are deliberately unprivileged so the simulator runs without root: NETCONF listens on `1830`
+rather than the privileged IANA `830`, and SNMP on `1161` rather than `161`.
 
 ## Demo
 
-The Phase 1 end-to-end check is the SNMP walk in Quick start: `ifDescr` returns the three
-interfaces and the vendor RSSI OID returns a float.
+The Phase 2 end-to-end check is a NETCONF round trip: connect with `ssh`, `edit-config` into the
+candidate, `commit`, then `get-config` returns the committed value. The full transcript is in
+[docs/protocols/NETCONF.md](docs/protocols/NETCONF.md#9-walkthrough) and the golden files replay it
+in the test suite.
 
-The RESTCONF check (available from Phase 4) and the full cross-domain scenario (Phase 6):
+The SNMP walk from Quick start is the Phase 1 check (`ifDescr` returns the three interfaces and
+the vendor RSSI OID returns a float). The RESTCONF check (Phase 4) and the full cross-domain
+scenario (Phase 6):
 
 ```bash
 curl http://localhost:8080/restconf/data/sim-device:system-info
@@ -87,7 +96,7 @@ configs/             YAML configuration
 docs/                architecture, store, eventbus, config, ADRs, protocols
 scripts/             check.sh, demo.sh
 test/integration/    testcontainers-based integration tests (build tag `integration`)
-testdata/            golden files
+testdata/            golden files (testdata/netconf/ NETCONF transcripts)
 yang/                YANG modules (documentation only, embedded)
 ```
 

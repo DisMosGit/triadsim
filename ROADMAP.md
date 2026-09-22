@@ -264,63 +264,95 @@
 ## Phase 2 — NETCONF base 🔧
 
 > **Цель:** SSH-сервер с NETCONF subsystem, hello, framing, `get-config`, `edit-config`, `candidate`, `commit`, `discard-changes`.
-> **Результат фазы:** `ssh -p 830 -s netconf admin@localhost` работает, golden-тесты проходят.
+> **Результат фазы:** `ssh -p 1830 -s admin@localhost netconf` работает, golden-тесты проходят.
 
 ### 2.1. SSH-сервер
-- [ ] `internal/netconf/ssh.go` — `x/crypto/ssh` server · `M` 🧪
-- [ ] Любой логин/пароль принимается (см. `desicion.md` §1) · `S`
-- [ ] Subsystem `netconf` · `S` 🧪
-- [ ] Порт `:830` · `S`
-- [ ] Коммит: `feat(netconf): ssh subsystem` · `M` 🧪
+- [x] `internal/netconf/ssh.go` — `x/crypto/ssh` server · `M` 🧪
+- [x] Любой логин/пароль принимается (см. `desicion.md` §1) · `S`
+- [x] Subsystem `netconf` · `S` 🧪
+- [x] Порт `:830` · `S` → `:1830` (см. отклонения)
+- [x] Коммит: `feat(netconf): ssh subsystem` · `M` 🧪
 
 ### 2.2. Hello и capabilities
-- [ ] `internal/netconf/hello.go` — приём/отправка `<hello>` · `M` 🧪
-- [ ] Capabilities: `base:1.0`, `base:1.1`, `candidate`, `confirmed-commit`, `notification`, `writable-running` · `S` 📝
-- [ ] Session-id (счётчик) · `S` 🧪
-- [ ] Коммит: `feat(netconf): hello + capabilities` · `M` 🧪
+- [x] `internal/netconf/hello.go` — приём/отправка `<hello>` · `M` 🧪
+- [x] Capabilities: `base:1.0`, `base:1.1`, `candidate`, `writable-running` (`confirmed-commit`, `notification` — в фазе 3, см. отклонения) · `S` 📝
+- [x] Session-id (счётчик) · `S` 🧪
+- [x] Коммит: `feat(netconf): hello + capabilities` · `M` 🧪
 
 ### 2.3. Framing (EOM и chunked)
-- [ ] `internal/netconf/framing.go` — `\n##\n` delimiter + chunked framing (`\n#<len>\n...`) · `L` 🧪
-- [ ] Детект режима после hello · `M` 🧪
-- [ ] Тесты на оба режима · `M` 🧪
-- [ ] Коммит: `feat(netconf): framing eom + chunked` · `L` 🧪
+- [x] `internal/netconf/framing.go` — `]]>]]>` delimiter + chunked framing (`\n#<hex-len>\n...`) · `L` 🧪
+- [x] Детект режима после hello (+ sniff первого байта клиентского hello) · `M` 🧪
+- [x] Тесты на оба режима · `M` 🧪
+- [x] Коммит: `feat(netconf): framing eom + chunked` · `L` 🧪
 
 ### 2.4. XML RPC-парсинг
-- [ ] `internal/netconf/rpc.go` — типы `<rpc>`, `<rpc-reply>`, `<rpc-error>` через `encoding/xml` · `M` 🧪
-- [ ] Dispatcher по имени операции · `M` 🧪
-- [ ] Коммит: `feat(netconf): rpc parsing + dispatch` · `M` 🧪
+- [x] `internal/netconf/rpc.go` — типы `<rpc>`, `<rpc-reply>`, `<rpc-error>` через `encoding/xml` · `M` 🧪
+- [x] Dispatcher по имени операции · `M` 🧪
+- [x] Коммит: `feat(netconf): rpc parsing + dispatch` · `M` 🧪
 
 ### 2.5. get-config
-- [ ] `internal/netconf/ops/getconfig.go` · `M` 🧪
-- [ ] Subtree-фильтр (упрощённый) · `M` 🧪
-- [ ] XPath-фильтр — заглушка · `S`
-- [ ] Коммит: `feat(netconf): get-config` · `M` 🧪
+- [x] `internal/netconf/ops/getconfig.go` · `M` 🧪
+- [x] Subtree-фильтр (упрощённый) · `M` 🧪
+- [x] XPath-фильтр — заглушка (`operation-not-supported`) · `S`
+- [x] Коммит: `feat(netconf): get-config` · `M` 🧪
 
 ### 2.6. edit-config
-- [ ] `internal/netconf/ops/editconfig.go` · `M` 🧪
-- [ ] Operations: `merge`, `replace`, `create`, `delete`, `remove` · `M` 🧪
-- [ ] Запись в candidate · `M` 🧪
-- [ ] Ошибка `invalid-value` при провале `Validate()` · `M` 🧪
-- [ ] Коммит: `feat(netconf): edit-config` · `L` 🧪
+- [x] `internal/netconf/ops/editconfig.go` · `M` 🧪
+- [x] Operations: `merge`, `replace`, `create`, `delete`, `remove` · `M` 🧪
+- [x] Запись в candidate (и в running по capability `writable-running`) · `M` 🧪
+- [x] Ошибка `invalid-value` при провале `Validate()` · `M` 🧪
+- [x] Коммит: `feat(netconf): edit-config` · `L` 🧪
 
 ### 2.7. candidate / commit / discard-changes
-- [ ] `internal/netconf/ops/commit.go` · `M` 🧪
-- [ ] `internal/netconf/ops/discard.go` · `S` 🧪
-- [ ] `commit` валидирует и применяет candidate → running, persist в `startup.json` · `M` 🧪
-- [ ] Публикация `ConfigChanged` в EventBus · `S` 🧪
-- [ ] Коммит: `feat(netconf): commit + discard-changes` · `M` 🧪
+- [x] `internal/netconf/ops/commit.go` · `M` 🧪
+- [x] `internal/netconf/ops/discard.go` · `S` 🧪
+- [x] `commit` валидирует и применяет candidate → running, persist в `startup.json` · `M` 🧪
+- [x] Публикация `ConfigChanged` в EventBus · `S` 🧪
+- [x] Коммит: `feat(netconf): commit + discard-changes` · `M` 🧪
 
 ### 2.8. Golden-тесты NETCONF
-- [ ] `testdata/netconf/edit-config.xml` + `.golden.xml` · `M` 🧪
-- [ ] `testdata/netconf/get-config.xml` + `.golden.xml` · `M` 🧪
-- [ ] Харнесс с флагом `-update` · `M` 🧪
-- [ ] Коммит: `test(netconf): golden tests` · `M` 🧪
+- [x] `testdata/netconf/edit-config.xml` + `.golden.xml` · `M` 🧪
+- [x] `testdata/netconf/get-config.xml` + `.golden.xml` · `M` 🧪
+- [x] Харнесс с флагом `-update` · `M` 🧪
+- [x] Коммит: `test(netconf): golden tests` · `M` 🧪
 
 ### 2.9. Документация NETCONF
-- [ ] `docs/protocols/NETCONF.md` — SSH, hello, framing, операции, XML-примеры, коды ошибок · `L` 📝
-- [ ] Коммит: `docs(netconf): base operations` · `M` 📝
+- [x] `docs/protocols/NETCONF.md` — SSH, hello, framing, операции, XML-примеры, коды ошибок · `L` 📝
+- [x] Коммит: `docs(netconf): base operations` · `M` 📝
 
 **✅ Phase 2 завершена, когда:** `ssh -s netconf` работает; edit-config → commit → get-config round-trip; golden-тесты зелёные.
+
+> **Отклонения при реализации Phase 2:**
+> - **Порт `:1830` вместо `:830`.** 830 — привилегированный порт: bind требует root или
+>   `CAP_NET_BIND_SERVICE`, а README и `docs/config.md` обещают, что все порты непривилегированные.
+>   Отклонение повторяет решение SNMP (`1161` вместо `161`). Меняется в `configs/default.yaml`.
+> - **Команда подключения: `ssh -p 1830 -s admin@localhost netconf`.** В OpenSSH `-s` — флаг без
+>   аргумента, имя subsystem передаётся как remote command; форма из DoD
+>   (`ssh -p 830 -s netconf admin@localhost`) трактует `netconf` как хост. Исправлено в
+>   `docs/protocols/NETCONF.md` и README.
+> - **Capabilities только реализованные:** `base:1.0`, `base:1.1`, `candidate`,
+>   `writable-running`. `confirmed-commit:1.1` и `notification:1.0` добавляются в фазе 3 вместе с
+>   реализацией, иначе сервер объявлял бы то, чего не умеет.
+> - **Данные в XML с корнем в модели.** `<config>` и `<data>` содержат top-level узлы модели
+>   (`system-info`, `interfaces`), list keys — дочерние листья; примеры из `.docs/plan.md` §4.2 и
+>   `.docs/desicion.md` §3.3 с корневым `<radio-link>` заменены на RFC 6241-совместимые.
+> - **`get-config` отдаёт только configuration data** (`config:"false"`-листья не возвращаются).
+>   Отдельного state-датасторa и операции `<get>` в этой фазе нет: state остаётся в SNMP.
+> - **`edit-config` валидирует proposed snapshot целиком** и только потом пишет, поэтому
+>   отклонённая правка не оставляет мусора в candidate; subtree `replace`/`delete` никогда не
+>   удаляют read-only листья.
+> - **Пакет `ops` внутри `netconf`**, как в роадмапе, но тип `Error` и дерево `Element` живут в
+>   `ops`: иначе `netconf` (рендер `<rpc-error>`) и `ops` импортировали бы друг друга.
+> - **Дополнительный коммит `feat(router): schema navigation`** — `Children`/`Node` нужны
+>   XML-кодеку, чтобы отличать контейнеры, списки (с именем ключа) и листья с их типом. Схема
+>   строится по типам модели и не зависит от инстансов в датасторе. Пригодится RESTCONF в фазе 4.
+> - **Проводка в `start` (2.1) идёт вместе с коммитом 2.3**, когда сессия реально завершает hello
+>   и согласует framing; порядок коммитов 2.1–2.3 отличается от нумерации (как в фазе 0).
+> - **`go test ./... -update` не работает** для пакетов без флага: golden-файлы пересобираются
+>   командой `go test ./internal/netconf -update`.
+> - **Нет `lock`/`unlock`, `kill-session`, `copy-config`, `delete-config`, `validate`, `<get>`** —
+>   вне scope фазы; неизвестные операции дают `operation-not-supported`. Candidate общий для всех
+>   сессий, при конкуренции побеждает последняя запись.
 
 ---
 
