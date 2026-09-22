@@ -45,7 +45,8 @@ Integration tests use testcontainers and require Docker.
 
 ## Conventions
 - Go 1.27+. Dependencies are a closed list: `gosnmp`, `x/crypto/ssh`, `chi`, `cobra`,
-  `prometheus`, `testify`, `testcontainers`, `yaml.v3` (+ stdlib). Ask before adding anything.
+  `prometheus`, `testify`, `testcontainers`, `yaml.v3`, `grpc` + `openconfig/gnmi` (the optional
+  gNMI plane only) (+ stdlib). Ask before adding anything.
 - Logging via `log/slog` only; no `fmt.Println`/`log.Print*`.
 - Wrap errors with `%w`; no panics outside `main`; no silently ignored errors.
 - Anything blocking takes `context.Context` as the first parameter; respect cancellation in EventBus consumers.
