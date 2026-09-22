@@ -47,7 +47,7 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/config` | YAML configuration, defaults, `Load`, `Validate` | implemented |
 | `internal/log` | `log/slog` JSON logging on stderr | implemented |
 | `internal/event` | typed events and the channel-based bus | implemented |
-| `internal/store` | running/candidate/startup, diff/commit/rollback, JSON persistence | implemented (Phase 1.5) |
+| `internal/store` | running/candidate/startup, diff/commit/rollback/snapshot/restore, JSON persistence | implemented (Phase 1.5, snapshot/restore Phase 3) |
 | `internal/clock` | injectable clock and `FakeClock` | implemented |
 | `internal/model` | managed-object structs with `path`/`xml`/`json` tags | radio, L2, sync, device (Phases 1.1-1.4) |
 | `internal/router` | path ↔ model, OID ↔ path, RPC dispatch, commit validation, schema tree for protocol codecs | implemented (Phase 1.6, schema Phase 2) |
@@ -55,7 +55,8 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters | Phase 4 |
 | `internal/sync` | PTP, SyncE, ESMC/SSM, holdover | Phase 5 |
 | `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) | implemented (Phase 1.8); traps Phase 6 |
-| `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes | implemented (Phase 2); confirmed-commit and notifications Phase 3 |
+| `internal/netconf` | SSH subsystem, hello, EOM/chunked framing, RPC, get-config/edit-config/commit/discard-changes, confirmed commit | implemented (Phase 2, confirmed commit Phase 3) |
+| `internal/netconf/notif` | RFC 5277 create-subscription, subscription registry and notification dispatch | implemented (Phase 3) |
 | `internal/restconf` | chi router, codecs, CRUD | Phase 4 |
 | `internal/gnmi` | optional gRPC service | Phase 7 |
 | `internal/metrics` | Prometheus collectors and `/metrics` | implemented (Phase 1.9) |
@@ -71,8 +72,13 @@ synchronization — behind one managed-object model and one management plane.
 - `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store` and `event`.
 - `internal/snmp`, `internal/netconf`, `internal/restconf`, `internal/gnmi` depend on `router`,
   `store` and `event`. `internal/netconf/ops` holds the configuration operations (get-config,
-  edit-config, commit, discard-changes) and owns the protocol error type, so the parent package
-  can render an `<rpc-error>` from it without an import cycle.
+  edit-config, commit, discard-changes, the confirmed-commit state machine) and owns the protocol
+  error type, so the parent package can render an `<rpc-error>` from it without an import cycle.
+  `internal/netconf/notif` holds the RFC 5277 side (create-subscription, the notification
+  document, the dispatcher): it depends on `internal/event`, `internal/netconf/ops` (for the XML
+  element tree and the error type) and `internal/clock`, and never on the parent package. A
+  session's notification write goes through the session's own message writer, which is safe for
+  concurrent use, so a reply and a notification never interleave.
 - `internal/cli` and `internal/metrics` may depend on everything.
 - Domain packages never import each other: radio, L2 and sync interact only through events.
 

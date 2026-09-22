@@ -38,7 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `start` now also serves the NETCONF subsystem; the default port is the unprivileged `1830` instead of the privileged IANA `830`.
 - Golden NETCONF transcripts in `testdata/netconf/` replayed by `internal/netconf/golden_test.go`; regenerate with `go test ./internal/netconf -update`.
 - Documentation: `docs/protocols/NETCONF.md` rewritten for the implemented operations, framing, data model, error tags and a full walkthrough.
+- `internal/store`: `Snapshot` (a detached copy of running) and `Restore` (put a snapshot back as running and startup, leaving candidate untouched), the rollback primitive of a confirmed commit.
+- `internal/netconf/ops`: confirmed commit (`<commit><confirmed/><confirm-timeout>`): the timeout defaults to 600 s, `FakeClock` drives it in tests, a confirming `<commit/>` cancels the rollback, and the session that issued the unconfirmed commit reverts it when it ends. `Deps` gained `SessionID` and `Confirmed`.
+- `internal/netconf/notif`: RFC 5277 `create-subscription` for the `sim-events` stream, the `<notification>` document (`<eventTime>` plus a `sim-events:event` payload) and a dispatcher that fans EventBus events out to every subscribed session, one buffered channel per session.
+- `internal/netconf`: capabilities `confirmed-commit:1.0` and `notification:1.0`, notification writes serialized with the RPC replies through the session's message writer, and the session lifecycle releasing the notification subscription and reverting an unconfirmed confirmed commit.
+- Golden NETCONF transcript `testdata/netconf/confirmed-commit.xml`; the two existing transcripts were regenerated for the new hello capabilities.
 
 ### Notes
 
-- Phase 2 is complete: `ssh -p 1830 -s admin@localhost netconf` works, and `edit-config` → `commit` → `get-config` round-trips against the stored configuration. Phase 1 delivered the SNMP walk (`ifDescr` plus the vendor RSSI OID) and `/metrics`. RESTCONF, gNMI, confirmed-commit, notifications and the radio/L2/sync domain logic land in Phases 3–7. See [ROADMAP.md](ROADMAP.md).
+- Phase 3 is complete: `<commit><confirmed/><confirm-timeout>30</confirm-timeout></commit>` reverts the configuration unless a `<commit/>` confirms it in time (or the issuing session ends first), and a session that sends `<create-subscription>` receives a `<notification>` for every EventBus event. Phase 2 delivered the NETCONF base (`ssh -p 1830 -s admin@localhost netconf`, `edit-config` → `commit` → `get-config`), and Phase 1 the SNMP walk (`ifDescr` plus the vendor RSSI OID) and `/metrics`. RESTCONF, gNMI and the radio/L2/sync domain logic land in Phases 4–7. See [ROADMAP.md](ROADMAP.md).

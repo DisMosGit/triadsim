@@ -362,40 +362,77 @@
 > **Результат фазы:** confirmed-commit откатывается по таймауту; подписка получает notification при событии.
 
 ### 3.1. confirmed-commit
-- [ ] `internal/netconf/ops/confirmed_commit.go` · `M` 🧪
-- [ ] `<confirm-timeout>` (по умолчанию 600с) · `S`
-- [ ] `time.AfterFunc` через `clock.Clock` · `M` 🧪
-- [ ] `commit` без `<confirmed/>` в течение таймаута отменяет rollback · `M` 🧪
-- [ ] Публикация `ConfigChanged` после подтверждения · `S`
-- [ ] Тесты через `FakeClock` · `M` 🧪
-- [ ] Коммит: `feat(netconf): confirmed-commit with rollback` · `L` 🧪
+- [x] `internal/netconf/ops/confirmed_commit.go` · `M` 🧪
+- [x] `<confirm-timeout>` (по умолчанию 600с) · `S`
+- [x] `time.AfterFunc` через `clock.Clock` · `M` 🧪
+- [x] `commit` без `<confirmed/>` в течение таймаута отменяет rollback · `M` 🧪
+- [x] Публикация `ConfigChanged` после подтверждения · `S`
+- [x] Тесты через `FakeClock` · `M` 🧪
+- [x] Коммит: `feat(netconf): confirmed-commit with rollback` · `L` 🧪
 
 **DoD:** при отсутствии подтверждения candidate откатывается к running.
 
 ### 3.2. create-subscription
-- [ ] `internal/netconf/notif/subscription.go` · `M` 🧪
-- [ ] Stream `sim-events` · `S`
-- [ ] Привязка подписки к EventBus · `M` 🧪
-- [ ] Replay (`<replayStartTime>`) — заглушка · `S`
-- [ ] Коммит: `feat(netconf): create-subscription` · `M` 🧪
+- [x] `internal/netconf/notif/subscription.go` · `M` 🧪
+- [x] Stream `sim-events` · `S`
+- [x] Привязка подписки к EventBus · `M` 🧪
+- [x] Replay (`<replayStartTime>`) — заглушка · `S`
+- [x] Коммит: `feat(netconf): create-subscription` · `M` 🧪
 
 ### 3.3. Notification dispatcher
-- [ ] `internal/netconf/notif/dispatcher.go` · `M` 🧪
-- [ ] Сериализация `Event` → `<notification>` XML · `M` 🧪
-- [ ] Отправка всем активным подпискам · `M` 🧪
-- [ ] Framing через chunked, если hello 1.1 · `S` 🧪
-- [ ] Коммит: `feat(netconf): notification dispatch` · `M` 🧪
+- [x] `internal/netconf/notif/dispatcher.go` · `M` 🧪
+- [x] Сериализация `Event` → `<notification>` XML · `M` 🧪
+- [x] Отправка всем активным подпискам · `M` 🧪
+- [x] Framing через chunked, если hello 1.1 · `S` 🧪
+- [x] Коммит: `feat(netconf): notification dispatch` · `M` 🧪
 
 ### 3.4. Интеграция с EventBus
-- [ ] Подписка NETCONF-диспетчера на EventBus при старте · `S` 🧪
-- [ ] Тест: `Publish` в EventBus → notification уходит в сессию · `M` 🧪
-- [ ] Коммит: `feat(netconf): eventbus integration` · `M` 🧪
+- [x] Подписка NETCONF-диспетчера на EventBus при старте · `S` 🧪
+- [x] Тест: `Publish` в EventBus → notification уходит в сессию · `M` 🧪
+- [x] Коммит: `feat(netconf): eventbus integration` · `M` 🧪
 
 ### 3.5. Документация notifications
-- [ ] Дополнить `docs/protocols/NETCONF.md` разделом про confirmed-commit и notifications · `M` 📝
-- [ ] Коммит: `docs(netconf): confirmed-commit + notifications` · `S` 📝
+- [x] Дополнить `docs/protocols/NETCONF.md` разделом про confirmed-commit и notifications · `M` 📝
+- [x] Коммит: `docs(netconf): confirmed-commit + notifications` · `S` 📝
 
 **✅ Phase 3 завершена, когда:** confirmed-commit откатывается по таймауту; подписка получает `<notification>`.
+
+> **Отклонения при реализации Phase 3:**
+> - **`:confirmed-commit:1.0`, а не `1.1`.** Реализованы `<confirmed/>` и `<confirm-timeout>`
+>   (RFC 4741 §8.4); `<persist>`, `<persist-id>` и операция `<cancel-commit>` из RFC 6241 §8.4
+>   не реализованы и отвечают `operation-not-supported`. Сервер объявляет только то, что умеет,
+>   поэтому capability — версии 1.0.
+> - **Один confirmed commit на сервер.** Candidate общий для всех сессий, поэтому повторный
+>   confirmed commit из другой сессии — `access-denied`; follow-up confirmed commit из той же
+>   сессии применяет свои изменения, сохраняет цель отката первого commit'а и лишь
+>   перезапускает таймер. Подтверждающим считается любой успешный `<commit/>` без
+>   `<confirmed/>`, из любой сессии (RFC 4741 §8.4.1 не ограничивает сессию подтверждения).
+> - **Откат — это новый примитив store.** Появились `Store.Snapshot`/`Store.Restore`:
+>   снимок running берётся до confirmed commit, откат восстанавливает running и startup, но
+>   **не** candidate — незакоммиченная конфигурация остаётся видимой и её можно закоммитить
+>   заново. Формат `startup.json` не изменился (версия 1).
+> - **Откат при завершении сессии.** По RFC 4741 §8.4.1 confirmed commit откатывается, если
+>   сессия, которая его выдала, завершилась до подтверждения — включая `close-session` и
+>   shutdown; поэтому `Server.Close` не сбрасывает таймер, а `Serve` дожидается завершения
+>   сессий.
+> - **`create-subscription`: один stream без replay.** Stream `sim-events`; отсутствие
+>   `<stream>` выбирает его, другое имя — `invalid-value`; `<filter>`, `<startTime>` и
+>   `<stopTime>` (replay) отвечают `operation-not-supported` — так же, как XPath-заглушка фазы 2.
+> - **Подписка на сессию, а не на RPC.** Вторая `create-subscription` в той же сессии заменяет
+>   предыдущую подписку; подписка снимается при завершении сессии (RFC 5277 §2.3), отдельного
+>   unsubscribe нет. Диспетчер держит одну подписку на шину на весь сервер и по буферизованному
+>   каналу на сессию; переполнение — drop с логом, как у `event.Bus`.
+> - **Формат notification.** `<notification>` в namespace RFC 5277, `<eventTime>` в RFC 3339
+>   UTC, payload `<event xmlns="urn:sim:sim-events">` с `type`/`resource`/`severity`/`message` —
+>   тот же модуль `sim-events`, что у RESTCONF SSE (фаза 4). Framing — тот же, что у сессии
+>   (`base:1.1` → chunked); запись защищена мьютексом messageWriter, чтобы reply и notification
+>   не перемешивались.
+> - **Проводка.** `Deps` получил `SessionID` и `Confirmed`, `netconf.Options` — `Clock`
+>   (в тестах `FakeClock`); диспетчер создаётся в `New` и запускается в `Serve`; при `bus == nil`
+>   `create-subscription` отвечает `operation-not-supported`.
+> - **Golden-транскрипты.** Хелло в `testdata/netconf/*.golden.xml` изменился (две новые
+>   capability) — файлы перегенерированы через `go test ./internal/netconf -update`; добавлен
+>   `testdata/netconf/confirmed-commit.xml`.
 
 ---
 

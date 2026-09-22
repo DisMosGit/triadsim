@@ -12,11 +12,12 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 2 — NETCONF base.** The repository builds, tests and starts; the foundations,
+> **Status: Phase 3 — NETCONF advanced.** The repository builds, tests and starts; the foundations,
 > managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router,
 > the SNMP v2c agent with the Prometheus endpoint and the NETCONF subsystem with
-> `get-config`/`edit-config`/`commit`/`discard-changes` are in place. RESTCONF, the domain logic,
-> confirmed-commit and notifications land in Phases 3–7; see [ROADMAP.md](ROADMAP.md).
+> `get-config`/`edit-config`/`commit`/`discard-changes`, the confirmed commit with rollback and
+> `create-subscription` notifications are in place. RESTCONF and the domain logic land in
+> Phases 4–7; see [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 
@@ -63,6 +64,19 @@ candidate, `commit`, then `get-config` returns the committed value. The full tra
 [docs/protocols/NETCONF.md](docs/protocols/NETCONF.md#9-walkthrough) and the golden files replay it
 in the test suite.
 
+Phase 3 adds the confirmed commit and notifications. In the `ssh` session, subscribe to the event
+stream and then watch a commit made from another session arrive as a `<notification>`:
+
+```xml
+<rpc message-id="1"><create-subscription><stream>sim-events</stream></create-subscription></rpc>
+<!-- now every EventBus event is delivered, for example: -->
+<notification xmlns="urn:ietf:params:xml:ns:netconf:notification:1.0"><eventTime>2024-01-02T03:04:05Z</eventTime><event xmlns="urn:sim:sim-events"><type>ConfigChanged</type><resource>device</resource><message>commit</message></event></notification>
+```
+
+A commit can also be provisional: `<commit><confirmed/><confirm-timeout>30</confirm-timeout></commit>`
+applies the configuration and reverts it unless a `<commit/>` follows within 30 seconds. See
+[docs/protocols/NETCONF.md §7.3](docs/protocols/NETCONF.md#73-commit).
+
 The SNMP walk from Quick start is the Phase 1 check (`ifDescr` returns the three interfaces and
 the vendor RSSI OID returns a float). The RESTCONF check (Phase 4) and the full cross-domain
 scenario (Phase 6):
@@ -91,6 +105,7 @@ internal/radio/      RRL domain: link budget, ATPC, ACM, alarms
 internal/l2/         L2 domain: VLAN/QinQ, MAC table, STP/RSTP, LLDP, counters
 internal/sync/       sync domain: PTP, SyncE, ESMC/SSM, holdover
 internal/{snmp,netconf,restconf,gnmi,metrics}/   management planes
+internal/netconf/notif/                          RFC 5277 create-subscription and notification dispatch
 internal/tools/      blank imports pinning the approved dependency stack
 configs/             YAML configuration
 docs/                architecture, store, eventbus, config, ADRs, protocols

@@ -61,6 +61,22 @@ for e := range ch {
   unsubscribing and closing may happen from different goroutines. Consumers must respect their
   own context: draining a channel after cancellation is the consumer's responsibility.
 
+## Consumers
+
+| Consumer | Status |
+|---|---|
+| `internal/netconf/notif` | implemented (Phase 3): the NETCONF notification dispatcher |
+| SNMP trap sender | Phase 6 |
+| Prometheus counters | Phase 6 |
+| `internal/radio`, `internal/l2`, `internal/sync` reactions | Phases 4-6 |
+
+The NETCONF dispatcher (`internal/netconf/notif`) is the first concrete consumer. It takes one
+bus subscription for the whole server, renders each event once as an RFC 5277 `<notification>`
+document and queues it for every subscribed session, so a client that does not read loses its
+own notifications (logged as `notification dropped, session is not reading`) without delaying the
+other sessions or the publisher. `Bus.Publish` stamps events that arrive without a timestamp,
+which is what gives a notification its `eventTime`.
+
 ## Testing
 
 `internal/event/bus_test.go` covers fan-out, timestamp stamping, buffer overflow and recovery,
