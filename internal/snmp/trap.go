@@ -31,9 +31,15 @@ const (
 )
 
 // Mandatory varbinds and MIB objects the trap payload uses.
+//
+// snmpTrapOIDOID is snmpTrapOID.0 of SNMPv2-MIB. RFC 3418 defines
+// snmpTrapOID OBJECT IDENTIFIER ::= { snmpTrap 1 } with
+// snmpTrap OBJECT IDENTIFIER ::= { snmpMIBObjects 4 }, which expands to
+// 1.3.6.1.6.3.1.1.4; the .0 instance below is the varbind RFC 3416 §4.2.6
+// requires as the second varbind of every SNMPv2-Trap-PDU.
 const (
 	sysUpTimeOID   = "1.3.6.1.2.1.1.3.0"
-	snmpTrapOIDOID = "1.3.6.1.2.1.11.4.1.0"
+	snmpTrapOIDOID = "1.3.6.1.6.3.1.1.4.1.0"
 	// trapIfDescrBase is the ifDescr column; trap varbinds index it with the
 	// interface index of the link.
 	trapIfDescrBase = "1.3.6.1.2.1.2.2.1.2"

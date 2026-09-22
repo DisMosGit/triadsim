@@ -195,7 +195,7 @@ The following textual conventions from RFC 2579 are used by TriadSim MIB objects
 | `dot1dTpFdbPort` | `1.3.6.1.2.1.17.4.3.1.2` | INTEGER | read-only | Phase 4.11 (bridge port number) |
 | `dot1dTpFdbStatus` | `1.3.6.1.2.1.17.4.3.1.3` | INTEGER | read-only | Phase 4.11 (`dynamic` → `learned(3)`, `static` → `mgmt(5)`) |
 | `dot1qVlanStaticName` | `1.3.6.1.2.1.17.7.1.4.3.1.1` | DisplayString | read-only | Phase 4.11 (index is the VLAN id) |
-| `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 (implemented) |
+| `snmpTrapOID.0` | `1.3.6.1.6.3.1.1.4.1.0` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 (implemented) |
 
 Scalar objects are addressed with the `.0` instance (`sysDescr.0`); interface columns append the
 1-based interface index (`ifDescr.1`). The bridge tables use their own indexes:
@@ -318,7 +318,7 @@ SNMPv2-Trap-PDU:
     Value: 1234567                  (12345.67 seconds)
 
   varbind[2]:
-    OID: 1.3.6.1.2.1.11.4.1.0      (snmpTrapOID.0)
+    OID: 1.3.6.1.6.3.1.1.4.1.0      (snmpTrapOID.0)
     Value: 1.3.6.1.4.1.99999.0.1   (simRadioLinkDown)
 
   varbind[3]:
