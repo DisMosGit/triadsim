@@ -68,6 +68,16 @@ func copyValues(values map[string]any) map[string]any {
 	return out
 }
 
+// SetValidator installs the Validator used by Commit. It exists so a validator
+// that needs the store, such as the router, can be installed after the store is
+// constructed. Call it before the first Commit; it is not safe to call
+// concurrently with Commit.
+func (m *Memory) SetValidator(v Validator) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validator = v
+}
+
 // validPath reports whether path is in canonical form: non-empty, no leading
 // or trailing slash, no empty segment and no surrounding whitespace.
 func validPath(path string) bool {

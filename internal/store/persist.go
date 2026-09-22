@@ -21,7 +21,10 @@ const fileVersion = 1
 const (
 	kindBool    = "bool"
 	kindInt     = "int"
+	kindUint8   = "uint8"
+	kindUint16  = "uint16"
 	kindUint32  = "uint32"
+	kindUint64  = "uint64"
 	kindFloat64 = "float64"
 	kindString  = "string"
 )
@@ -46,8 +49,14 @@ func leafKindOf(value any) (string, bool) {
 		return kindBool, true
 	case int:
 		return kindInt, true
+	case uint8:
+		return kindUint8, true
+	case uint16:
+		return kindUint16, true
 	case uint32:
 		return kindUint32, true
+	case uint64:
+		return kindUint64, true
 	case float64:
 		return kindFloat64, true
 	case string:
@@ -147,8 +156,26 @@ func decodeLeaf(leaf diskLeaf) (any, error) {
 			return nil, err
 		}
 		return value, nil
+	case kindUint8:
+		var value uint8
+		if err := json.Unmarshal(leaf.Value, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case kindUint16:
+		var value uint16
+		if err := json.Unmarshal(leaf.Value, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
 	case kindUint32:
 		var value uint32
+		if err := json.Unmarshal(leaf.Value, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	case kindUint64:
+		var value uint64
 		if err := json.Unmarshal(leaf.Value, &value); err != nil {
 			return nil, err
 		}

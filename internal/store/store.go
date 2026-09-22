@@ -39,7 +39,7 @@ var ErrUnknownDatastore = errors.New("store: unknown datastore")
 var ErrInvalidPath = errors.New("store: invalid path")
 
 // ErrInvalidValue is returned when a value is not one of the supported leaf
-// types (bool, int, uint32, float64, string).
+// types (bool, int, uint8, uint16, uint32, uint64, float64, string).
 var ErrInvalidValue = errors.New("store: unsupported value type")
 
 // ErrValidation is returned by Commit when the configured Validator rejects

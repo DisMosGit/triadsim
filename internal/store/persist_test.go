@@ -15,11 +15,14 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "startup.json")
 	values := map[string]any{
-		"interfaces/interface[name=radio0]/radio-link/tx-power": 20.5,
-		"interfaces/interface[name=radio0]/enabled":             true,
-		"interfaces/interface[name=radio0]/mtu":                 uint32(1500),
-		"sync/ptp/domain":                                       24,
-		"system-info/device-id":                                 "sim-001",
+		"interfaces/interface[name=radio0]/radio-link/tx-power":        20.5,
+		"interfaces/interface[name=radio0]/enabled":                    true,
+		"interfaces/interface[name=radio0]/mtu":                        uint32(1500),
+		"interfaces/interface[name=radio0]/radio-link/acm/min-profile": uint8(1),
+		"vlans/vlan[id=100]/pvid":                                      uint16(100),
+		"interfaces/interface[name=eth0]/counters/in-octets":           uint64(1) << 40,
+		"sync/ptp/domain":       24,
+		"system-info/device-id": "sim-001",
 	}
 
 	require.NoError(t, Save(ctx, path, values))

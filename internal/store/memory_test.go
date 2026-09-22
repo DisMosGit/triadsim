@@ -56,7 +56,10 @@ func TestMemorySetGet(t *testing.T) {
 	}{
 		{name: "bool", value: true},
 		{name: "int", value: -5},
+		{name: "uint8", value: uint8(7)},
+		{name: "uint16", value: uint16(4094)},
 		{name: "uint32", value: uint32(42)},
+		{name: "uint64", value: uint64(1) << 40},
 		{name: "float64", value: 3.5},
 		{name: "string", value: "radio0"},
 	}
@@ -115,7 +118,7 @@ func TestMemorySetInvalidPath(t *testing.T) {
 func TestMemorySetInvalidValue(t *testing.T) {
 	ctx := context.Background()
 
-	for _, value := range []any{int64(1), uint16(1), uint64(1), nil, struct{}{}, []int{1}} {
+	for _, value := range []any{int64(1), int32(1), float32(1), nil, struct{}{}, []int{1}} {
 		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
 			m := newMemory()
 
