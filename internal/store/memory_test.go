@@ -146,6 +146,87 @@ func TestMemoryDelete(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNotFound))
 }
 
+// A write to running must also reach candidate: Commit makes running a copy of
+// candidate, so a running-only write would be reverted by the next commit.
+func TestMemorySetRunningMirrorsCandidate(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+
+	set(t, m, Running, "a/1", 1)
+
+	got, err := m.Get(ctx, Candidate, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+
+	changes, err := m.Diff(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, changes, "running and candidate must agree")
+}
+
+// A write to candidate is a pending edit and must leave running untouched.
+func TestMemorySetCandidateDoesNotTouchRunning(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+
+	set(t, m, Candidate, "a/1", 1)
+
+	_, err := m.Get(ctx, Running, "a/1")
+	assert.True(t, errors.Is(err, ErrNotFound))
+
+	changes, err := m.Diff(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []Change{{Op: OpCreate, Path: "a/1", New: 1}}, changes)
+}
+
+// Deleting from running must delete from candidate too, or a commit would
+// resurrect the leaves of a removed list entry.
+func TestMemoryDeleteRunningMirrorsCandidate(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+
+	set(t, m, Running, "a/1", 1)
+	require.NoError(t, m.Delete(ctx, Running, "a/1"))
+
+	for _, ds := range []Datastore{Running, Candidate} {
+		_, err := m.Get(ctx, ds, "a/1")
+		assert.True(t, errors.Is(err, ErrNotFound), "%s must not keep the deleted leaf", ds)
+	}
+
+	changes, err := m.Diff(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, changes)
+}
+
+// Deleting a pending candidate edit must leave the running value alone.
+func TestMemoryDeleteCandidateKeepsRunning(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+
+	set(t, m, Running, "a/1", 1)
+	require.NoError(t, m.Delete(ctx, Candidate, "a/1"))
+
+	got, err := m.Get(ctx, Running, "a/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+}
+
+// A running write made after the last commit must survive the next commit,
+// which is the P1 regression: a plane that writes running directly (SNMP SET, a
+// NETCONF or RESTCONF edit targeting running, a domain) must not be reverted.
+func TestMemoryCommitKeepsRunningWrite(t *testing.T) {
+	ctx := context.Background()
+	m := newMemory()
+	set(t, m, Running, "a/1", 1)
+	require.NoError(t, m.Commit(ctx))
+
+	set(t, m, Running, "a/2", 2)
+	require.NoError(t, m.Commit(ctx))
+
+	got, err := m.Get(ctx, Running, "a/2")
+	require.NoError(t, err)
+	assert.Equal(t, 2, got)
+}
+
 func TestMemoryList(t *testing.T) {
 	ctx := context.Background()
 	m := newMemory()

@@ -390,10 +390,10 @@ func (r *Router) Set(ctx context.Context, ds store.Datastore, path string, value
 // measured radio levels — which only the owning domain may do; management
 // planes go through Set, which rejects it.
 //
-// The value is written to the running and the candidate datastore. Candidate is
-// what Commit copies into running, so a later NETCONF commit would otherwise
-// drop the state a domain just wrote; read-only seed leaves already live in
-// both datastores for the same reason.
+// The write targets running and the store mirrors it into candidate, so a later
+// NETCONF commit — which makes running a copy of candidate — cannot drop the
+// state a domain just wrote. One write also leaves no window in which a commit
+// could observe the two datastores apart.
 func (r *Router) SetState(ctx context.Context, path string, value any) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -402,17 +402,15 @@ func (r *Router) SetState(ctx context.Context, path string, value any) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	for _, ds := range []store.Datastore{store.Running, store.Candidate} {
-		if err := r.store.Set(ctx, ds, result.Path, result.Value); err != nil {
-			return Result{}, err
-		}
+	if err := r.store.Set(ctx, store.Running, result.Path, result.Value); err != nil {
+		return Result{}, err
 	}
 	return result, nil
 }
 
-// DeleteState removes a state leaf from the running and the candidate
-// datastore. A leaf that is already absent from candidate is not an error, so
-// deleting a learned entry twice is safe.
+// DeleteState removes a read-only state leaf from running; the store mirrors
+// the removal into candidate, so the leaf leaves both datastores. A leaf that
+// is already absent is not an error, so deleting a learned entry twice is safe.
 func (r *Router) DeleteState(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -429,10 +427,8 @@ func (r *Router) DeleteState(ctx context.Context, path string) error {
 		return fmt.Errorf("%w: %s is not a leaf", ErrNotFound, parsed.String())
 	}
 
-	for _, ds := range []store.Datastore{store.Running, store.Candidate} {
-		if err := r.store.Delete(ctx, ds, parsed.String()); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
+	if err := r.store.Delete(ctx, store.Running, parsed.String()); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	return nil
 }

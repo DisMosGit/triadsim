@@ -34,6 +34,11 @@ type Options struct {
 // Memory is the in-memory Store implementation. It is safe for concurrent
 // use; every datastore is a flat map from router path to leaf value, so
 // container nodes never appear as entries.
+//
+// Candidate is a superset of running: every mutation of running is mirrored
+// into candidate under the same lock, so candidate always holds running plus
+// the pending edits. Commit relies on that invariant when it makes running a
+// copy of candidate.
 type Memory struct {
 	mu          sync.RWMutex
 	running     map[string]any
@@ -104,6 +109,21 @@ func (m *Memory) datastore(ds Datastore) (map[string]any, error) {
 	}
 }
 
+// mirror propagates a mutation of Running to Candidate, so candidate always
+// holds running plus the pending edits. value is ignored when remove is true.
+// Mutations of Candidate and Startup are not mirrored. The caller must hold
+// m.mu.
+func (m *Memory) mirror(ds Datastore, path string, value any, remove bool) {
+	if ds != Running {
+		return
+	}
+	if remove {
+		delete(m.candidate, path)
+		return
+	}
+	m.candidate[path] = value
+}
+
 // Get returns the value at path in ds, or ErrNotFound.
 func (m *Memory) Get(ctx context.Context, ds Datastore, path string) (any, error) {
 	if err := ctx.Err(); err != nil {
@@ -126,6 +146,13 @@ func (m *Memory) Get(ctx context.Context, ds Datastore, path string) (any, error
 
 // Set stores value at path in ds. The value must be one of the supported leaf
 // types and path must be in canonical form.
+//
+// A write to Running is mirrored into Candidate under the same lock, because
+// candidate must stay a superset of running: Commit makes running a copy of
+// candidate, so a running-only write would be silently reverted by the next
+// commit. This is the path SNMP SET, a NETCONF or RESTCONF edit targeting
+// running, and the L2 domain use. A write to Candidate is a pending edit and
+// leaves running untouched.
 func (m *Memory) Set(ctx context.Context, ds Datastore, path string, value any) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -145,10 +172,13 @@ func (m *Memory) Set(ctx context.Context, ds Datastore, path string, value any) 
 		return err
 	}
 	values[path] = value
+	m.mirror(ds, path, value, false)
 	return nil
 }
 
-// Delete removes path from ds, or returns ErrNotFound.
+// Delete removes path from ds, or returns ErrNotFound. Removing a path from
+// Running also removes it from Candidate, so a later Commit cannot resurrect
+// the deleted leaves.
 func (m *Memory) Delete(ctx context.Context, ds Datastore, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -165,6 +195,7 @@ func (m *Memory) Delete(ctx context.Context, ds Datastore, path string) error {
 		return fmt.Errorf("%w: %s", ErrNotFound, path)
 	}
 	delete(values, path)
+	m.mirror(ds, path, nil, true)
 	return nil
 }
 
@@ -213,9 +244,11 @@ func (m *Memory) Diff(ctx context.Context) ([]Change, error) {
 // Commit validates the candidate, applies it to running and persists the new
 // startup configuration.
 //
-// Candidate is authoritative: running becomes a copy of candidate. The
-// startup file is written before running is swapped, so a failed write or a
-// rejected candidate leaves every datastore untouched.
+// Candidate is authoritative: running becomes a copy of candidate. Because
+// every write to running is mirrored into candidate, this cannot revert
+// configuration that a plane wrote without using candidate. The startup file
+// is written before running is swapped, so a failed write or a rejected
+// candidate leaves every datastore untouched.
 func (m *Memory) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err

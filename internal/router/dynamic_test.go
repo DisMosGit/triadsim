@@ -136,11 +136,56 @@ func TestSetStateWritesBothDatastores(t *testing.T) {
 	assert.ErrorIs(t, err, ErrReadOnly)
 
 	require.NoError(t, r.DeleteState(ctx, rssi))
-	_, err = st.Get(ctx, store.Running, rssi)
-	assert.ErrorIs(t, err, store.ErrNotFound)
+	for _, ds := range []store.Datastore{store.Running, store.Candidate} {
+		_, err = st.Get(ctx, ds, rssi)
+		assert.ErrorIs(t, err, store.ErrNotFound, "state must leave %s", ds)
+	}
 
 	// Deleting an already absent state leaf is a no-op.
 	require.NoError(t, r.DeleteState(ctx, rssi))
+}
+
+// Configuration written to running through the router is mirrored into
+// candidate and therefore survives a commit. This is the path SNMP SET, a
+// NETCONF or RESTCONF edit targeting running, and the L2 domain use.
+func TestRunningWriteSurvivesCommit(t *testing.T) {
+	ctx := context.Background()
+	r, st := newTestRouter(t)
+
+	power := "interfaces/interface[name=radio0]/radio-link/tx-power"
+	_, err := r.Set(ctx, store.Running, power, 21.5)
+	require.NoError(t, err)
+
+	stored, err := st.Get(ctx, store.Candidate, power)
+	require.NoError(t, err)
+	assert.Equal(t, 21.5, stored, "running writes must be visible in candidate")
+
+	require.NoError(t, st.Commit(ctx))
+
+	stored, err = st.Get(ctx, store.Running, power)
+	require.NoError(t, err)
+	assert.Equal(t, 21.5, stored, "commit must not revert a running write")
+}
+
+// A list entry removed through a running-targeted delete must not be
+// resurrected by a commit, because the deletion is mirrored into candidate.
+func TestRunningDeleteSurvivesCommit(t *testing.T) {
+	ctx := context.Background()
+	r, st := newTestRouter(t)
+
+	const vlan = "vlans/vlan[id=100]"
+	leaves, err := r.List(ctx, store.Running, vlan)
+	require.NoError(t, err)
+	require.NotEmpty(t, leaves)
+	for _, leaf := range leaves {
+		require.NoError(t, r.Delete(ctx, store.Running, leaf.Path))
+	}
+
+	require.NoError(t, st.Commit(ctx))
+
+	device, err := r.Snapshot(ctx, store.Running)
+	require.NoError(t, err)
+	assert.Empty(t, device.VLANs, "the deleted VLAN must not come back")
 }
 
 // A template list entry whose stored leaves were all deleted disappears from

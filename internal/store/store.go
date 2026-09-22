@@ -81,15 +81,23 @@ type Change struct {
 //     they are how NETCONF reverts an unconfirmed confirmed commit
 //     (RFC 6241 §8.4.1).
 //
+// Candidate is a superset of running: implementations must mirror every
+// mutation of running into candidate, so candidate always holds running plus
+// the pending edits. Commit makes running a copy of candidate, and the
+// invariant is what keeps that from reverting configuration written by a plane
+// that writes running directly (SNMP SET, an edit targeting running, a domain).
+//
 // Read-only enforcement (nodes tagged config:"false") belongs to
 // internal/router, not to the store. Implementations must be safe for
 // concurrent use and must respect ctx cancellation.
 type Store interface {
 	// Get returns the value at path in ds, or ErrNotFound.
 	Get(ctx context.Context, ds Datastore, path string) (any, error)
-	// Set stores value at path in ds, creating the path when necessary.
+	// Set stores value at path in ds, creating the path when necessary. A
+	// write to Running is mirrored into Candidate.
 	Set(ctx context.Context, ds Datastore, path string, value any) error
-	// Delete removes path from ds, or returns ErrNotFound.
+	// Delete removes path from ds, or returns ErrNotFound. Removing a path
+	// from Running also removes it from Candidate.
 	Delete(ctx context.Context, ds Datastore, path string) error
 	// List returns every path in ds below prefix, in lexicographic order.
 	List(ctx context.Context, ds Datastore, prefix string) ([]string, error)

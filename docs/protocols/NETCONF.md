@@ -226,7 +226,9 @@ Reply (end-of-message framing shown):
 ```
 
 - `<target>` is mandatory: `running` (the `writable-running` capability) or `candidate`.
-  `startup` is rejected — a commit is what persists startup.
+  `startup` is rejected — a commit is what persists startup. A write to `running` is mirrored into
+  `candidate`, so it survives a later `<commit>` (`docs/adr/0005-running-write-through.md`); a
+  write to `candidate` stays a pending edit until a commit applies it.
 - `<default-operation>`: `merge` (default), `replace` or `none`.
 - Operation attributes are matched by local name, so both `operation="merge"` and
   `nc:operation="merge"` work:

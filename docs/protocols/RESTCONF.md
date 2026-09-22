@@ -348,10 +348,17 @@ Every write goes to the datastore selected by `?datastore=`, default `running`:
 - `?datastore=candidate` writes the work-in-progress datastore. The seeded device lives in `running` and `candidate`; the test suite writes candidate and confirms `running` is untouched.
 - `?datastore=startup` is read-only for every method: it answers `405` with `Allow: GET, HEAD`.
 
-RESTCONF writes are **not** mirrored between datastores and are not committed. The store's `Commit` is candidate-authoritative: it validates `candidate`, makes `running` a copy of it and persists `startup` from it. The practical consequences are:
+RESTCONF writes are not committed by the request itself. The store's `Commit` is
+candidate-authoritative: it validates `candidate`, makes `running` a copy of it and persists
+`startup` from it, and every write to `running` is mirrored into `candidate` (see
+`docs/adr/0005-running-write-through.md`). The practical consequences are:
 
-- A change written to `running` over RESTCONF can be overwritten by a later NETCONF `commit`, because commit replaces `running` with `candidate`.
-- A change written to `candidate` over RESTCONF is not visible in `running` until a NETCONF `commit` applies it.
+- A change written to `running` over RESTCONF is visible immediately and survives a later NETCONF
+  `commit`, because the write is mirrored into `candidate`.
+- A change written to `candidate` over RESTCONF is a pending edit: it is not visible in `running`
+  until a NETCONF `commit` applies it, and `discard-changes` drops it.
+- A running-targeted write also updates the paths it addresses in `candidate`, so it can overwrite
+  a pending candidate edit for the same path (last writer wins).
 - A successful write publishes a `ConfigChanged` event on the shared bus; the request itself never commits.
 
 ---

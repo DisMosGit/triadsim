@@ -104,15 +104,31 @@ before it reaches the store — the store itself has no schema knowledge.
 ## Domain state writes
 
 `internal/router` gives the domains a second write path. `SetState` writes a leaf tagged
-`config:"false"` — a learned MAC entry, a counter, a measured radio level — to the running **and**
-the candidate datastore, and `DeleteState` removes it from both. Candidate is what `Commit` copies
-into running, so a state leaf written only to running would disappear at the next commit; the
-seeded read-only leaves already live in both for the same reason. Management planes keep using
-`Set`, which writes the addressed datastore and rejects a read-only leaf.
+`config:"false"` — a learned MAC entry, a counter, a measured radio level — and `DeleteState`
+removes it. Both address the running datastore, which the store mirrors into candidate, so the
+leaf lives in both: candidate is what `Commit` copies into running, and a state leaf written only
+to running would disappear at the next commit. Management planes keep using `Set`, which rejects a
+read-only leaf.
 
-Configuration written through RESTCONF goes to the running datastore only, so it is visible
-immediately but not part of candidate; a later NETCONF commit replaces it with the candidate
-contents. This is a deliberate Phase 4 limitation, recorded in `ROADMAP.md`.
+## The candidate invariant
+
+Candidate is a **superset of running**: every mutation of running — a `Set`, a `Delete`, and
+therefore also an SNMP `SET`, a NETCONF or RESTCONF edit targeting running, and every L2
+configuration write — is mirrored into candidate inside the same critical section. Candidate
+therefore always holds running plus the pending edits, which is exactly what `Commit` assumes when
+it makes running a copy of candidate.
+
+What follows:
+
+- A write to running is visible immediately and survives the next commit.
+- A list entry removed from running is removed from candidate too, so a commit cannot resurrect it.
+- A write to candidate is a pending edit: `running` is untouched until a commit applies it, and
+  `Rollback` discards it.
+- Cross-plane writes are last-writer-wins: a running-targeted edit also updates candidate, so it
+  can overwrite a pending candidate edit for the same path. There is no cross-plane locking.
+- `Diff` reports only pending edits; a running-only change can no longer show up as a diff.
+
+The decision and its alternatives are recorded in `docs/adr/0005-running-write-through.md`.
 
 ## Persistence
 

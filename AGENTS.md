@@ -25,15 +25,17 @@ Integration tests use testcontainers and require Docker.
 ## Architecture
 - `cmd/simulator` — cobra CLI entrypoint.
 - `internal/model` — managed-object structs with `path`/`xml`/`json` tags. YANG files are documentation only; the runtime never parses YANG.
-- `internal/store` — running/candidate/startup datastores; JSON persistence.
+- `internal/store` — running/candidate/startup datastores; JSON persistence. Candidate is a
+  superset of running: every write to running is mirrored into candidate, so a `<commit>` cannot
+  revert an SNMP SET, a running-targeted edit or a domain write (`docs/adr/0005-running-write-through.md`).
 - `internal/router` — path↔model and OID↔path mapping, RPC dispatch, the model schema tree and the MIB tables.
 - `internal/datatree` — shared data-tree read/edit engine behind the NETCONF and RESTCONF codecs.
 - `internal/event` — EventBus on channels. Domains don't import each other; cross-domain reactions flow through events.
 - `internal/radio`, `internal/l2`, `internal/sync` — domain logic. Simplified state machines, not real protocol stacks.
 - `internal/{snmp,netconf,restconf,gnmi,cli,metrics}` — management planes (`gnmi` optional).
 - `internal/l2` reads state through `router.Snapshot`, writes configuration to the running datastore
-  and learned or measured state through `router.SetState`; its periodic work (MAC aging, STP forward
-  delays, LLDP refresh) runs on the injected `clock.Clock`.
+  (mirrored into candidate by the store) and learned or measured state through `router.SetState`;
+  its periodic work (MAC aging, STP forward delays, LLDP refresh) runs on the injected `clock.Clock`.
 
 ## Scope (do not exceed MVP)
 - SNMP v2c only, community `public`. No v3, no informs, no auth.

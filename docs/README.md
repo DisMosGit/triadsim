@@ -35,6 +35,7 @@ Index of the TriadSim documentation. Start with the architecture, then the subsy
 | [adr/0002-model-vs-yang.md](adr/0002-model-vs-yang.md) | Go structs as the model, YANG as embedded documentation |
 | [adr/0003-modular-monolith.md](adr/0003-modular-monolith.md) | One binary, one store and one event bus instead of services |
 | [adr/0004-gosnmp-ssh-xml.md](adr/0004-gosnmp-ssh-xml.md) | The protocol stack: gosnmp, x/crypto/ssh, chi, gRPC + openconfig/gnmi |
+| [adr/0005-running-write-through.md](adr/0005-running-write-through.md) | Writes to running are mirrored into candidate, so a commit cannot revert them |
 | [adr/template.md](adr/template.md) | ADR template |
 
 ## Planned
