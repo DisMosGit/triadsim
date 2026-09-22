@@ -124,6 +124,12 @@ func (sess *session) dispatch(ctx context.Context, rpc incomingRPC) (rpcReply, b
 		reply.Data = data
 		return reply, false
 
+	case "edit-config":
+		if err := ops.EditConfig(ctx, sess.deps(), operation); err != nil {
+			return errorReplyFrom(rpc.MessageID, err), false
+		}
+		return okReply(rpc.MessageID), false
+
 	case "close-session":
 		return okReply(rpc.MessageID), true
 

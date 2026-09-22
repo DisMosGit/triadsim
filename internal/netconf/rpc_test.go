@@ -2,6 +2,7 @@ package netconf
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/DisMosGit/triadsim/internal/netconf/ops"
+	"github.com/DisMosGit/triadsim/internal/store"
 )
 
 func TestParseRPC(t *testing.T) {
@@ -196,6 +198,26 @@ func TestGetConfigOverSSH(t *testing.T) {
 			assert.Equal(t, "sim-001", systemInfo.Child("device-id").TrimmedText())
 		})
 	}
+}
+
+func TestEditConfigOverSSHReportsInvalidValue(t *testing.T) {
+	r, st := newTestStore(t)
+	srv := startTestServer(t, r, st, nil)
+	io, _ := openNetconfSession(t, dialSSH(t, srv.Addr().String()))
+	sendHello(t, io, framingEOM, CapabilityBase10)
+
+	send(t, io, framingEOM, `<rpc message-id="8"><edit-config><target><candidate/></target><config>`+
+		`<interfaces><interface><name>radio0</name><radio-link><tx-power>999</tx-power></radio-link></interface></interfaces>`+
+		`</config></edit-config></rpc>`)
+
+	reply := readReply(t, io, framingEOM)
+	assert.Equal(t, "8", mustAttr(t, reply, "message-id"))
+	assert.Equal(t, ops.TagInvalidValue, errorTag(t, reply))
+
+	// A rejected edit leaves the candidate untouched.
+	value, err := st.Get(context.Background(), store.Candidate, "interfaces/interface[name=radio0]/radio-link/tx-power")
+	require.NoError(t, err)
+	assert.Equal(t, 20.0, value)
 }
 
 func TestCloseSessionRepliesOkAndEndsTheSession(t *testing.T) {
