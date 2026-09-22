@@ -29,11 +29,12 @@ const (
 // DefaultPath is the configuration file used when --config is not given.
 const DefaultPath = "configs/default.yaml"
 
-// Default ports. Every port is unprivileged so the simulator runs without root.
+// Default ports. Every port is unprivileged so the simulator runs without root:
+// SNMP uses 1161 instead of 161 and NETCONF uses 1830 instead of the IANA 830.
 const (
 	DefaultSNMPPort     = 1161
 	DefaultSNMPTrapPort = 1162
-	DefaultNETCONFPort  = 830
+	DefaultNETCONFPort  = 1830
 	DefaultRESTCONFPort = 8080
 	DefaultMetricsPort  = 9090
 	DefaultGNMIPort     = 9339

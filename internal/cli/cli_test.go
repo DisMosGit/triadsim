@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/DisMosGit/triadsim/internal/store"
 )
@@ -61,6 +63,7 @@ func testDeps(t *testing.T) runtimeDeps {
 
 	return runtimeDeps{
 		snmpAddr:    "127.0.0.1:0",
+		netconfAddr: "127.0.0.1:0",
 		metricsAddr: "127.0.0.1:0",
 		startupFile: filepath.Join(t.TempDir(), "startup.json"),
 	}
@@ -150,12 +153,13 @@ func TestRunLogsStartAndStop(t *testing.T) {
 	assert.Equal(t, "INFO", start["level"])
 	assert.Equal(t, float64(1161), start["snmp_port"])
 	assert.Equal(t, float64(1162), start["snmp_trap_port"])
-	assert.Equal(t, float64(830), start["netconf_port"])
+	assert.Equal(t, float64(1830), start["netconf_port"])
 	assert.Equal(t, float64(8080), start["restconf_port"])
 	assert.Equal(t, float64(9090), start["metrics_port"])
 	assert.Equal(t, false, start["gnmi_enabled"])
 	assert.Equal(t, "debug", start["log_level"])
 	assert.Equal(t, "sim-001", start["device_id"])
+	assert.NotEmpty(t, start["netconf_addr"])
 
 	cancel()
 
@@ -237,6 +241,53 @@ func TestRunServesMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, body.String(), "simulator_uptime_seconds")
 	assert.Contains(t, body.String(), "simulator_snmp_requests_total")
+}
+
+func TestRunServesNetconfSubsystem(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	start := waitForRecord(t, out, "simulator starting")
+	address, ok := start["netconf_addr"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, address)
+
+	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{
+		User:            "admin",
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	channel, requests, err := client.OpenChannel("session", nil)
+	require.NoError(t, err)
+	go ssh.DiscardRequests(requests)
+	defer func() { _ = channel.Close() }()
+
+	accepted, err := channel.SendRequest("subsystem", true, ssh.Marshal(&struct{ Name string }{Name: "netconf"}))
+	require.NoError(t, err)
+	require.True(t, accepted, "start must accept the netconf subsystem")
+
+	// The server hello arrives first, with end-of-message framing.
+	buffered := bufio.NewReader(channel)
+	var message strings.Builder
+	for !strings.HasSuffix(message.String(), "]]>]]>") {
+		b, err := buffered.ReadByte()
+		require.NoError(t, err)
+		message.WriteByte(b)
+	}
+
+	assert.Contains(t, message.String(), "<hello")
+	assert.Contains(t, message.String(), "urn:ietf:params:netconf:base:1.1")
+	assert.Contains(t, message.String(), "<session-id>")
 }
 
 // decodeRecords parses newline-delimited JSON records from data.

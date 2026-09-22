@@ -11,7 +11,7 @@ snmp:
   trap-port: 1162   # destination port for traps
 
 netconf:
-  port: 830         # SSH subsystem "netconf"; any login/password is accepted
+  port: 1830        # SSH subsystem "netconf"; any login/password is accepted
 
 restconf:
   port: 8080        # no authentication

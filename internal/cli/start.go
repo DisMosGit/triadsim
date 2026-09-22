@@ -16,6 +16,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/log"
 	"github.com/DisMosGit/triadsim/internal/metrics"
 	"github.com/DisMosGit/triadsim/internal/model"
+	"github.com/DisMosGit/triadsim/internal/netconf"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/snmp"
 	"github.com/DisMosGit/triadsim/internal/store"
@@ -29,6 +30,7 @@ const shutdownTimeout = 2 * time.Second
 // configuration.
 type runtimeDeps struct {
 	snmpAddr    string
+	netconfAddr string
 	metricsAddr string
 	startupFile string
 }
@@ -122,8 +124,19 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	}
 	defer func() { _ = agent.Close() }()
 
-	serveErr := make(chan error, 1)
+	netconfServer := netconf.New(r, st, bus, netconf.Options{
+		Addr: deps.netconfAddr,
+		Port: cfg.NETCONF.Port,
+	})
+	if err := netconfServer.Listen(); err != nil {
+		_ = server.Close()
+		return fmt.Errorf("setup netconf: %w", err)
+	}
+	defer func() { _ = netconfServer.Close() }()
+
+	serveErr := make(chan error, 2)
 	go func() { serveErr <- agent.Serve(ctx) }()
+	go func() { serveErr <- netconfServer.Serve(ctx) }()
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
@@ -137,6 +150,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		"log_level", cfg.Log.Level,
 		"startup_file", startupFile,
 		"snmp_addr", agent.Addr().String(),
+		"netconf_addr", netconfServer.Addr().String(),
 		"metrics_addr", metricsListener.Addr().String(),
 	)
 
