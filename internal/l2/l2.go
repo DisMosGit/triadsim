@@ -134,7 +134,7 @@ func (m *Manager) Tick(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return errors.Join(m.age(ctx), m.advanceSTP(ctx))
+	return errors.Join(m.age(ctx), m.advanceSTP(ctx), m.refreshLLDP(ctx))
 }
 
 // publish puts one event on the bus when a bus is configured.
