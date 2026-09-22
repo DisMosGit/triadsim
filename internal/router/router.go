@@ -88,6 +88,7 @@ type Binding struct {
 type Router struct {
 	root    *model.Device
 	store   store.Store
+	schema  *schemaNode
 	objects []indexedObject
 	byOID   map[string]indexedObject
 	byPath  map[string]indexedObject
@@ -108,10 +109,15 @@ func New(root *model.Device, st store.Store) (*Router, error) {
 	if err != nil {
 		return nil, err
 	}
+	schema, err := buildSchema(reflect.TypeOf(*root))
+	if err != nil {
+		return nil, err
+	}
 
 	r := &Router{
 		root:    root,
 		store:   st,
+		schema:  schema,
 		objects: objects,
 		byOID:   make(map[string]indexedObject, len(objects)),
 		byPath:  make(map[string]indexedObject, len(objects)),
