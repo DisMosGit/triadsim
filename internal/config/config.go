@@ -40,6 +40,10 @@ const (
 	DefaultGNMIPort     = 9339
 )
 
+// DefaultSNMPTrapHost is the trap destination the simulator sends to when the
+// configuration does not name another one.
+const DefaultSNMPTrapHost = "127.0.0.1"
+
 // Config is the complete simulator configuration.
 type Config struct {
 	SNMP     SNMP     `yaml:"snmp"`
@@ -53,8 +57,9 @@ type Config struct {
 
 // SNMP configures the SNMP v2c agent and its trap sender.
 type SNMP struct {
-	Port     int `yaml:"port"`
-	TrapPort int `yaml:"trap-port"`
+	Port     int    `yaml:"port"`
+	TrapHost string `yaml:"trap-host"`
+	TrapPort int    `yaml:"trap-port"`
 }
 
 // NETCONF configures the NETCONF SSH subsystem.
@@ -91,7 +96,7 @@ type Startup struct {
 // Default returns the built-in configuration. It is always valid.
 func Default() *Config {
 	return &Config{
-		SNMP:     SNMP{Port: DefaultSNMPPort, TrapPort: DefaultSNMPTrapPort},
+		SNMP:     SNMP{Port: DefaultSNMPPort, TrapHost: DefaultSNMPTrapHost, TrapPort: DefaultSNMPTrapPort},
 		NETCONF:  NETCONF{Port: DefaultNETCONFPort},
 		RESTCONF: RESTCONF{Port: DefaultRESTCONFPort},
 		Metrics:  Metrics{Port: DefaultMetricsPort},
@@ -128,8 +133,8 @@ func Load(path string) (*Config, error) {
 
 // Validate reports whether the configuration is usable. It never modifies the
 // receiver. Ports of enabled planes must be in 1-65535 and pairwise distinct,
-// Log.Level must be one of debug, info, warn or error (case-insensitive), and
-// Startup.File must be set.
+// Log.Level must be one of debug, info, warn or error (case-insensitive),
+// SNMP.TrapHost must name a destination, and Startup.File must be set.
 func (c *Config) Validate() error {
 	type port struct {
 		name string
@@ -162,6 +167,10 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("log.level: unknown level %q (want %s, %s, %s or %s)",
 			c.Log.Level, LevelDebug, LevelInfo, LevelWarn, LevelError)
+	}
+
+	if strings.TrimSpace(c.SNMP.TrapHost) == "" {
+		return errors.New("snmp.trap-host: must not be empty")
 	}
 
 	if strings.TrimSpace(c.Startup.File) == "" {

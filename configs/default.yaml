@@ -7,8 +7,9 @@
 # See docs/config.md for the full reference.
 
 snmp:
-  port: 1161        # SNMP v2c agent (community is fixed to "public")
-  trap-port: 1162   # destination port for traps
+  port: 1161            # SNMP v2c agent (community is fixed to "public")
+  trap-host: 127.0.0.1  # trap receiver address
+  trap-port: 1162       # trap receiver port
 
 netconf:
   port: 1830        # SSH subsystem "netconf"; any login/password is accepted

@@ -47,6 +47,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 			content: `
 snmp:
   port: 2161
+  trap-host: 10.0.0.9
   trap-port: 2162
 netconf:
   port: 1830
@@ -63,7 +64,7 @@ startup:
   file: /tmp/triadsim-startup.json
 `,
 			want: func(c *Config) {
-				c.SNMP = SNMP{Port: 2161, TrapPort: 2162}
+				c.SNMP = SNMP{Port: 2161, TrapHost: "10.0.0.9", TrapPort: 2162}
 				c.NETCONF = NETCONF{Port: 1830}
 				c.RESTCONF = RESTCONF{Port: 18080}
 				c.Metrics = Metrics{Port: 19090}
@@ -136,6 +137,11 @@ func TestLoadRejectsInvalidFiles(t *testing.T) {
 			name:    "unknown log level",
 			content: "log:\n  level: verbose\n",
 			wantErr: "unknown level",
+		},
+		{
+			name:    "empty trap host",
+			content: "snmp:\n  trap-host: \" \"\n",
+			wantErr: "snmp.trap-host",
 		},
 		{
 			name:    "empty startup file",

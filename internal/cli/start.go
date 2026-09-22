@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -29,11 +30,15 @@ import (
 // shutdownTimeout bounds the HTTP shutdown when the context is cancelled.
 const shutdownTimeout = 2 * time.Second
 
-// runtimeDeps overrides the listen addresses and the startup file, so tests can
-// use ephemeral ports and a temporary file. An empty field falls back to the
-// configuration.
+// uptimeInterval is how often the exposed sysUpTime leaf is refreshed.
+const uptimeInterval = time.Second
+
+// runtimeDeps overrides the listen addresses, the trap destination and the
+// startup file, so tests can use ephemeral ports and a temporary file. An empty
+// field falls back to the configuration.
 type runtimeDeps struct {
 	snmpAddr     string
+	trapAddr     string
 	netconfAddr  string
 	restconfAddr string
 	metricsAddr  string
@@ -144,6 +149,22 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	}
 	defer func() { _ = agent.Close() }()
 
+	trapSender := snmp.NewTrapSender(snmp.TrapOptions{
+		Addr:      deps.trapAddr,
+		Host:      cfg.SNMP.TrapHost,
+		Port:      cfg.SNMP.TrapPort,
+		Community: snmp.DefaultCommunity,
+		Router:    r,
+		Bus:       bus,
+		Clock:     clock.RealClock{},
+	})
+	if err := trapSender.Listen(); err != nil {
+		_ = server.Close()
+		_ = agent.Close()
+		return fmt.Errorf("setup snmp traps: %w", err)
+	}
+	defer func() { _ = trapSender.Close() }()
+
 	netconfServer := netconf.New(r, st, bus, netconf.Options{
 		Addr: deps.netconfAddr,
 		Port: cfg.NETCONF.Port,
@@ -176,12 +197,16 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	go l2Manager.Run(ctx)
 	go syncManager.Run(ctx)
 	go radioManager.Run(ctx)
+	go trapSender.Run(ctx)
+	go runUptime(ctx, r)
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
 		"device_id", device.SystemInfo.DeviceID,
 		"snmp_port", cfg.SNMP.Port,
+		"snmp_trap_host", cfg.SNMP.TrapHost,
 		"snmp_trap_port", cfg.SNMP.TrapPort,
+		"snmp_trap_dest", trapSender.Destination(),
 		"netconf_port", cfg.NETCONF.Port,
 		"restconf_port", cfg.RESTCONF.Port,
 		"metrics_port", cfg.Metrics.Port,
@@ -236,4 +261,26 @@ func shutdownServer(server *http.Server) {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+}
+
+// runUptime keeps the exposed system-info/uptime leaf in step with the wall
+// clock, so the sysUpTime object and the trap timeticks report the same value.
+// The leaf is state: SetState writes it to running and candidate and it is
+// never persisted.
+func runUptime(ctx context.Context, r *router.Router) {
+	start := time.Now()
+	ticker := time.NewTicker(uptimeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			seconds := uint32(time.Since(start).Seconds())
+			if _, err := r.SetState(ctx, "system-info/uptime", seconds); err != nil {
+				slog.WarnContext(ctx, "uptime: writing system-info/uptime failed", "error", err)
+			}
+		}
+	}
 }
