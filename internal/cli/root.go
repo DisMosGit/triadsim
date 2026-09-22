@@ -27,6 +27,10 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newStartCmd(os.Stderr))
+	cmd.AddCommand(newAlarmCmd(os.Stdout))
+	cmd.AddCommand(newDumpCmd(os.Stdout))
+	cmd.AddCommand(newConfigCmd(os.Stdout))
+	cmd.AddCommand(newVersionCmd(os.Stdout))
 
 	return cmd
 }
