@@ -125,6 +125,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	}
 
 	m := metrics.New(clock.RealClock{}, time.Now())
+	go m.Run(ctx, bus.Subscribe())
 
 	metricsAddr := deps.metricsAddr
 	if metricsAddr == "" {
