@@ -134,6 +134,37 @@ func TestRenderOmitsEmptyFieldsAndNormalizesTime(t *testing.T) {
 			`</event></notification>`, string(data))
 }
 
+func TestRenderStructuredAlarmAndTransitionFields(t *testing.T) {
+	when := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	alarm, err := Render(event.Event{
+		Type:      event.TypeAlarmRaised,
+		Resource:  "radio0",
+		Severity:  "critical",
+		Message:   "radio link down",
+		Domain:    event.DomainRadio,
+		Alarm:     event.AlarmRadioLinkDown,
+		Timestamp: when,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(alarm), `<alarm>radioLinkDown</alarm>`)
+	assert.NotContains(t, string(alarm), `<from>`)
+	assert.NotContains(t, string(alarm), `<to>`)
+
+	transition, err := Render(event.Event{
+		Type:      event.TypeStateTransition,
+		Resource:  "ptp/clock",
+		Domain:    event.DomainSync,
+		From:      "locked",
+		To:        "holdover-in-spec",
+		Timestamp: when,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, string(transition), `<from>locked</from>`)
+	assert.Contains(t, string(transition), `<to>holdover-in-spec</to>`)
+	assert.NotContains(t, string(transition), `<alarm>`)
+}
+
 func TestSubscriptionDeliversQueuedNotifications(t *testing.T) {
 	sender, documents := collector()
 	sub := newSubscription(1, StreamName, sender)

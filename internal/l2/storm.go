@@ -145,12 +145,24 @@ func (m *Manager) reportStorm(port string, rate uint32, storming bool) error {
 	m.stormAlarm[port] = storming
 
 	if storming {
-		m.publish(event.TypeAlarmRaised, "l2/storm/"+port, "major",
-			fmt.Sprintf("broadcast storm on %s: %d pps above the %d pps limit", port, rate, m.stormThreshold))
+		m.publish(event.Event{
+			Type:     event.TypeAlarmRaised,
+			Resource: "l2/storm/" + port,
+			Severity: "major",
+			Domain:   event.DomainL2,
+			Alarm:    event.AlarmL2Storm,
+			Message:  fmt.Sprintf("broadcast storm on %s: %d pps above the %d pps limit", port, rate, m.stormThreshold),
+		})
 		return nil
 	}
-	m.publish(event.TypeAlarmCleared, "l2/storm/"+port, "cleared",
-		fmt.Sprintf("broadcast storm on %s cleared: %d pps within the %d pps limit", port, rate, m.stormThreshold))
+	m.publish(event.Event{
+		Type:     event.TypeAlarmCleared,
+		Resource: "l2/storm/" + port,
+		Severity: "cleared",
+		Domain:   event.DomainL2,
+		Alarm:    event.AlarmL2Storm,
+		Message:  fmt.Sprintf("broadcast storm on %s cleared: %d pps within the %d pps limit", port, rate, m.stormThreshold),
+	})
 	return nil
 }
 

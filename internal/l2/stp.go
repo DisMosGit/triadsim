@@ -194,8 +194,14 @@ func (m *Manager) transition(ctx context.Context, state *model.STPState, port, r
 	if err := m.setSTPPort(ctx, state, port, role, name); err != nil {
 		return err
 	}
-	m.publish(event.TypeStateTransition, "l2/stp/"+port, "",
-		fmt.Sprintf("stp %s: %s -> %s (%s)", port, current.State, name, reason))
+	m.publish(event.Event{
+		Type:     event.TypeStateTransition,
+		Resource: "l2/stp/" + port,
+		Domain:   event.DomainL2,
+		From:     current.State,
+		To:       name,
+		Message:  fmt.Sprintf("stp %s: %s -> %s (%s)", port, current.State, name, reason),
+	})
 	m.scheduleSTP(port, phase)
 	return nil
 }

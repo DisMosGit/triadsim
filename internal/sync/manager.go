@@ -189,18 +189,15 @@ func (m *Manager) expireHoldover(ctx context.Context) error {
 	return err
 }
 
-// publish puts one event on the bus when a bus is configured.
-func (m *Manager) publish(kind event.EventType, resource, severity, message string) {
+// publish stamps and puts one event on the bus when a bus is configured.
+func (m *Manager) publish(e event.Event) {
 	if m.bus == nil {
 		return
 	}
-	m.bus.Publish(event.Event{
-		Type:      kind,
-		Resource:  resource,
-		Severity:  severity,
-		Message:   message,
-		Timestamp: m.clock.Now(),
-	})
+	if e.Timestamp.IsZero() {
+		e.Timestamp = m.clock.Now()
+	}
+	m.bus.Publish(e)
 }
 
 // stateWrite writes one state leaf, which only the owning domain may do.

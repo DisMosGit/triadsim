@@ -75,13 +75,18 @@ type notification struct {
 	Event     eventPayload
 }
 
-// eventPayload is the simulator's event as the notification content.
+// eventPayload is the simulator's event as the notification content. Alarm and
+// From/To carry the structured event fields, so a client does not have to parse
+// Message text; they are absent for events that do not have them.
 type eventPayload struct {
 	XMLName  xml.Name
 	Type     string `xml:"type"`
 	Resource string `xml:"resource,omitempty"`
 	Severity string `xml:"severity,omitempty"`
 	Message  string `xml:"message,omitempty"`
+	Alarm    string `xml:"alarm,omitempty"`
+	From     string `xml:"from,omitempty"`
+	To       string `xml:"to,omitempty"`
 }
 
 // Render encodes one bus event as a complete <notification> document:
@@ -105,6 +110,9 @@ func Render(e event.Event) ([]byte, error) {
 			Resource: e.Resource,
 			Severity: e.Severity,
 			Message:  e.Message,
+			Alarm:    e.Alarm,
+			From:     e.From,
+			To:       e.To,
 		},
 	}
 

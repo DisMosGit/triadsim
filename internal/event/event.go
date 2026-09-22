@@ -29,10 +29,43 @@ const (
 // Resource names the affected object (for example "radio0"), Severity carries
 // the alarm severity for alarm events, and Timestamp is set by the publisher —
 // normally from its injected clock.Clock.
+//
+// The optional structured fields keep consumers — the SNMP trap sender, the
+// metrics collector — from parsing Message text: Domain is the publishing
+// domain that labels an alarm's family, Alarm names the alarm condition, and
+// From/To are the states of a StateTransition. An alarm keeps its Alarm name on
+// both the raised and the cleared event; Type says which of the two it is.
 type Event struct {
 	Type      EventType `json:"type"`
 	Resource  string    `json:"resource"`
 	Severity  string    `json:"severity,omitempty"`
 	Message   string    `json:"message,omitempty"`
+	Domain    string    `json:"domain,omitempty"`
+	Alarm     string    `json:"alarm,omitempty"`
+	From      string    `json:"from,omitempty"`
+	To        string    `json:"to,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
+
+// Alarm family values carried in Event.Domain. They are the type label of the
+// simulator_alarms_total metric.
+const (
+	// DomainRadio is the radio-link (RRL) domain.
+	DomainRadio = "radio"
+	// DomainL2 is the L2 switching domain.
+	DomainL2 = "l2"
+	// DomainSync is the synchronization domain.
+	DomainSync = "sync"
+)
+
+// Alarm names carried in Event.Alarm.
+const (
+	// AlarmRadioLinkDown is the radio-link loss-of-signal alarm.
+	AlarmRadioLinkDown = "radioLinkDown"
+	// AlarmRadioLinkDegraded is the radio-link degradation alarm.
+	AlarmRadioLinkDegraded = "radioLinkDegraded"
+	// AlarmL2Storm is the broadcast-storm alarm.
+	AlarmL2Storm = "l2Storm"
+	// AlarmSyncHoldover is the synchronization holdover alarm.
+	AlarmSyncHoldover = "syncHoldover"
+)

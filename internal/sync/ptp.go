@@ -195,15 +195,33 @@ func (m *Manager) transition(ctx context.Context, next State, reason string) (St
 	if reason == "" {
 		reason = string(next)
 	}
-	m.publish(event.TypeStateTransition, "ptp/clock", "",
-		fmt.Sprintf("ptp clock: %s -> %s (%s)", from, next, reason))
+	m.publish(event.Event{
+		Type:     event.TypeStateTransition,
+		Resource: "ptp/clock",
+		Domain:   event.DomainSync,
+		From:     from,
+		To:       next,
+		Message:  fmt.Sprintf("ptp clock: %s -> %s (%s)", from, next, reason),
+	})
 
 	if next == StateHoldoverOutOfSpec {
-		m.publish(event.TypeAlarmRaised, "ptp/clock", "major",
-			fmt.Sprintf("ptp clock holdover expired in %s: source not restored", from))
+		m.publish(event.Event{
+			Type:     event.TypeAlarmRaised,
+			Resource: "ptp/clock",
+			Severity: "major",
+			Domain:   event.DomainSync,
+			Alarm:    event.AlarmSyncHoldover,
+			Message:  fmt.Sprintf("ptp clock holdover expired in %s: source not restored", from),
+		})
 	} else if from == StateHoldoverOutOfSpec {
-		m.publish(event.TypeAlarmCleared, "ptp/clock", "cleared",
-			fmt.Sprintf("ptp clock recovered from holdover: %s -> %s", from, next))
+		m.publish(event.Event{
+			Type:     event.TypeAlarmCleared,
+			Resource: "ptp/clock",
+			Severity: "cleared",
+			Domain:   event.DomainSync,
+			Alarm:    event.AlarmSyncHoldover,
+			Message:  fmt.Sprintf("ptp clock recovered from holdover: %s -> %s", from, next),
+		})
 	}
 	return next, nil
 }
