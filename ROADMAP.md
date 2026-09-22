@@ -766,52 +766,133 @@
 > **Результат фазы:** gNMI Get/Set работают; все `docs/protocols/*.md` на месте; `scripts/demo.sh` воспроизводит §3.6.
 
 ### 7.1. gNMI сервис
-- [ ] `internal/gnmi/server.go` — gRPC сервер на `:9339` · `L` 🔌 🧪
-- [ ] `Capabilities`, `Get`, `Set` (replace/update/delete) · `L` 🧪
-- [ ] `Subscribe` (ONCE + STREAM ON_CHANGE) minimal · `L` 🧪
-- [ ] TLS-off (per `desicion.md` §1) · `S`
-- [ ] Запуск по флагу `GNMI.Enabled` · `S` 🧪
-- [ ] Коммит: `feat(gnmi): server + get/set/subscribe` · `L` 🧪
+- [x] `internal/gnmi/server.go` — gRPC сервер на `:9339` · `L` 🔌 🧪
+- [x] `Capabilities`, `Get`, `Set` (replace/update/delete) · `L` 🧪
+- [x] `Subscribe` (ONCE + STREAM ON_CHANGE) minimal · `L` 🧪
+- [x] TLS-off (per `desicion.md` §1) · `S`
+- [x] Запуск по флагу `GNMI.Enabled` · `S` 🧪
+- [x] Коммит: `feat(gnmi): server + get/set/subscribe` · `L` 🧪
 
 ### 7.2. YANG-файлы как документация
-- [ ] `yang/sim-device.yang` · `M` 📝
-- [ ] `yang/sim-radio-link.yang` · `M` 📝
-- [ ] `yang/sim-l2-switching.yang` · `M` 📝
-- [ ] `yang/sim-sync.yang` · `M` 📝
-- [ ] `internal/model/embed.go` — `//go:embed ../../yang/*.yang` · `S` 🧪
-- [ ] CLI `schema --yang` дампит встроенные YANG · `M` 🧪
-- [ ] Коммит: `feat(yang): embedded schema + schema command` · `L` 📝
+- [x] `yang/sim-device.yang` · `M` 📝
+- [x] `yang/sim-radio-link.yang` · `M` 📝
+- [x] `yang/sim-l2-switching.yang` · `M` 📝
+- [x] `yang/sim-sync.yang` · `M` 📝
+- [x] `internal/model/embed.go` — `//go:embed ../../yang/*.yang` (см. отклонения: `yang/embed.go`) · `S` 🧪
+- [x] CLI `schema --yang` дампит встроенные YANG · `M` 🧪
+- [x] Коммит: `feat(yang): embedded schema + schema command` · `L` 📝
 
 ### 7.3. gNMI + YANG документация
-- [ ] `docs/protocols/gNMI.md` — Get/Set/Subscribe, paths, порты, TLS-off, примеры · `M` 📝
-- [ ] Коммит: `docs(gnmi): service + examples` · `M` 📝
+- [x] `docs/protocols/gNMI.md` — Get/Set/Subscribe, paths, порты, TLS-off, примеры · `M` 📝
+- [x] Коммит: `docs(gnmi): service + examples` · `M` 📝
 
 ### 7.4. Demo-скрипт
-- [ ] `scripts/demo.sh` — воспроизводит §3.6 одной командой · `M` 🔌 📝
-- [ ] `scripts/check.sh` — обновить (gofmt, vet, tests, integration) · `S` 🔌
-- [ ] Коммит: `chore: demo + check scripts` · `M` 📝
+- [x] `scripts/demo.sh` — воспроизводит §3.6 одной командой · `M` 🔌 📝
+- [x] `scripts/check.sh` — обновить (gofmt, vet, tests, integration) · `S` 🔌
+- [x] Коммит: `chore: demo + check scripts` · `M` 📝
 
 ### 7.5. README polish
-- [ ] README с диаграммой (ASCII или Mermaid), быстрым стартом, одним `curl` демо · `L` 📝
-- [ ] Пример `snmptrapd` вывода · `S` 📝
-- [ ] Пример `ssh -s netconf` сессии · `M` 📝
-- [ ] Коммит: `docs(readme): full walkthrough` · `M` 📝
+- [x] README с диаграммой (ASCII или Mermaid), быстрым стартом, одним `curl` демо · `L` 📝
+- [x] Пример `snmptrapd` вывода · `S` 📝
+- [x] Пример `ssh -s netconf` сессии · `M` 📝
+- [x] Коммит: `docs(readme): full walkthrough` · `M` 📝
 
 ### 7.6. ADR
-- [ ] `docs/adr/0002-model-vs-yang.md` — почему модели, а не YANG runtime · `M` 📝
-- [ ] `docs/adr/0003-modular-monolith.md` — почему один бинарник, а не микросервисы · `M` 📝
-- [ ] `docs/adr/0004-gosnmp-ssh-xml.md` — почему этот стек · `M` 📝
-- [ ] Коммит: `docs(adr): model, monolith, stack` · `M` 📝
+- [x] `docs/adr/0002-model-vs-yang.md` — почему модели, а не YANG runtime · `M` 📝
+- [x] `docs/adr/0003-modular-monolith.md` — почему один бинарник, а не микросервисы · `M` 📝
+- [x] `docs/adr/0004-gosnmp-ssh-xml.md` — почему этот стек · `M` 📝
+- [x] Коммит: `docs(adr): model, monolith, stack` · `M` 📝
 
 ### 7.7. Финальная вычитка
-- [ ] Пройтись по `TODO` в коде · `M`
-- [ ] Убрать мёртвый код, отладочные логи уровня Debug · `S`
-- [ ] `go vet ./... && go test ./... && go test -tags=integration ./...` — зелёные · `S` 🔌
-- [ ] Обновить `CHANGELOG.md` релизом `v0.1.0` · `S` 📝
-- [ ] Тег `v0.1.0` · `S`
-- [ ] Коммит: `chore: release v0.1.0` · `S`
+- [x] Пройтись по `TODO` в коде · `M`
+- [x] Убрать мёртвый код, отладочные логи уровня Debug (см. отклонения: логи оставлены осознанно) · `S`
+- [x] `go vet ./... && go test ./... && go test -tags=integration ./...` — зелёные · `S` 🔌
+- [x] Обновить `CHANGELOG.md` релизом `v0.1.0` · `S` 📝
+- [x] Тег `v0.1.0` · `S`
+- [x] Коммит: `chore: release v0.1.0` · `S`
 
 **✅ Phase 7 завершена, когда:** gNMI Get/Set работают; все `docs/protocols/*.md` на месте; `scripts/demo.sh` воспроизводит §3.6; `v0.1.0` тегирован.
+
+> **Отклонения при реализации Phase 7:**
+> - **Список зависимостей расширен на `google.golang.org/grpc` и `github.com/openconfig/gnmi`**
+>   (согласовано с владельцем проекта). Это единственный способ быть совместимым по проводу без
+>   `protoc` (в окружении его нет): модуль `openconfig/gnmi` уже содержит сгенерированный пакет
+>   `proto/gnmi`, а `grpc` импортируется только сервисом gNMI. С учётом pruning в `go.mod`
+>   добавились лишь пять косвенных модулей (`x/net`, `x/sys`, `x/text`, `genproto/rpc`,
+>   `protobuf`); список в `AGENTS.md` и `internal/tools/tools.go` обновлён. `goyang` (YANG-парсер)
+>   в зависимости **не** добавлен — он использовался только для разовой проверки .yang-файлов из
+>   scratch-модуля вне репозитория.
+> - **`yang/embed.go` вместо `internal/model/embed.go`.** `go:embed` запрещает `..` в шаблоне,
+>   поэтому файл эмбеда лежит рядом с модулями — новый корневой пакет `yang`
+>   (`Modules`, `Read`). Он единственный пакет вне `internal/`/`cmd/`; на путь данных он не
+>   влияет, его читает только `schema --yang`, а `yang/yang_test.go` сверяет модули со схемой
+>   модели (имена, namespace, покрытие всех узлов `Router.Schema()`).
+> - **`Router.Schema()` — новый экспорт** (`SchemaNode`): дерево схемы целиком, без инстансов
+>   датастора. Нужно команде `schema`; `Children` по-прежнему принимает путь.
+> - **`schema` без `--yang` печатает дерево модели, а не YANG.** Задача 7.2 требовала только
+>   `schema --yang`; флаг без аргумента был бы неполной командой, поэтому по умолчанию печатается
+>   JSON-дерево (путь, модуль, вид, ключ списка, тип листа), а `--yang [--module <имя>]` —
+>   исходники модулей. `--module` без `--yang` — ошибка.
+> - **gNMI `Set` — по одному листу на операцию.** `replace`/`update` принимают только лист
+>   (значение контейнера или списка — `INVALID_ARGUMENT`), `delete` — лист, элемент списка или
+>   поддерево контейнера. `union_replace` и JSON-значение поддерева не поддерживаются. Все
+>   операции одного запроса собираются в один `datatree.Apply` с `operation`-атрибутом на каждом
+>   документе, поэтому запрос атомарен; `BasePath` пуст, а документ каждого пути — цепочка от
+>   корня модели (в `datatree.Request` один `BasePath` на запрос).
+> - **gNMI `Subscribe` — только `ONCE` и `STREAM`/`ON_CHANGE`.** `SAMPLE`, `TARGET_DEFINED`,
+>   `POLL`, heartbeat, QoS, агрегация и `gnmi_ext` отвечают `UNIMPLEMENTED` или игнорируются;
+>   при `bus == nil` `STREAM` отвечает `UNIMPLEMENTED`. Событие шины отображается на путь модели
+>   таблицей (`events.go`: радио-линк, `ptp/clock`, `l2/stp/<port>`, `l2/storm/<port>`,
+>   `device` → корень), после чего поддерево перечитывается из running.
+> - **gNMI пишет только в running.** Как RESTCONF и в отличие от NETCONF `commit`, `Set` не
+>   трогает candidate и не персистит `startup.json`; после успешной записи публикуется
+>   `ConfigChanged`. TLS и аутентификации нет, как и у остальных плоскостей.
+> - **Capabilities без схемы.** `CapabilityResponse` объявляет четыре модели и три кодировки
+>   (`JSON`, `JSON_IETF`, `PROTO`), но не отдаёт YANG-схему: схемы в рантайме нет (ADR-0002),
+>   модули печатает `schema --yang`. `PROTO` поддержан и в `Get`, и в `Set`.
+> - **Ошибки маппятся таблицей** `datatree`-тег → gRPC-код (`data-missing` → `NOT_FOUND`,
+>   `access-denied` → `PERMISSION_DENIED`, `data-exists` → `ALREADY_EXISTS`,
+>   `operation-not-supported` → `UNIMPLEMENTED`, `invalid-value`/`unknown-element`/валидация →
+>   `INVALID_ARGUMENT`, остальное → `INTERNAL`). Отдельного gNMI-счётчика в `/metrics` нет —
+>   задача 7.1 его не требует, а 6.4 закрыта.
+> - **`gnmi_addr` в стартовом логе.** `start` добавляет `gnmi_port` и `gnmi_addr` (пустая строка,
+>   когда плоскость выключена); канал ошибок сервинга расширен до четырёх горутин, gNMI
+>   закрывается вместе с остальными плоскостями.
+> - **Внешними клиентами gNMI не проверялся** (`gnmic`, `grpcurl`, `pygnmi` в окружении нет),
+>   поэтому RPC-примеры в `gNMI.md` помечены как непроверенные, а сами RPC покрыты 51 тестом
+>   `internal/gnmi` с настоящим gRPC-клиентом на loopback и `test/integration/gnmi_test.go`
+>   в контейнере. `gnmi` включён в конфиге интеграционного стенда для **всех** тестов — это
+>   дополнительно проверяет и проводку `start`, и коллизии портов конфига.
+> - **YANG-файлы синтаксически проверены `goyang`** (вне зависимостей проекта) и сверяются со
+>   схемой модели тестом; `internal/model/embed.go` из задачи 7.2 заменён на `yang/embed.go`
+>   (см. выше). Модель радио-линка описана группировкой `radio-link`, поэтому модуль
+>   `sim-radio-link` не содержит top-level узлов, а контейнер `radio-link` объявлен в
+>   `sim-device.yang` через `uses`.
+> - **`scripts/check.sh` не требует Docker:** при отсутствии демона интеграционные тесты
+>   пропускаются с предупреждением, `make lint`/`make test` остаются пригодными. `make integration`
+>   и `make check` добавлены, `go vet -tags=integration ./...` включён в проверку.
+> - **`scripts/demo.sh` требует `go` и `curl`**, а `snmptrapd` и `ssh` использует, только если они
+>   установлены; `DEMO_NETCONF=1` открывает подписку `sim-events` через fifo и печатает
+>   полученные `<notification>`. Порты переопределяются переменными `DEMO_*_PORT`. Скрипт
+>   проверен полным прогоном (включая `DEMO_NETCONF=1`) и завершается ненулевым кодом, если
+>   переход в holdover или счётчики аварий не подтвердились.
+> - **Примеры в README сняты с реального прогона** (трап, нотификации, значения RSSI), а не
+>   сочинены; тот же сценарий пошагово описан в `docs/demo.md`. Отображение `OpaqueDouble` в
+>   `snmptrapd` зависит от версии net-snmp, поэтому пример помечен как сокращённый.
+> - **Версия в `internal/cli/Version` — `0.1.0`** (была `0.1.0-dev`), чтобы `simulator version`
+>   совпадал с тегом; релизная сборка по-прежнему может переопределить её `-ldflags`.
+> - **Debug-логи оставлены.** Проверены все вызовы `slog.Debug*`: это диагностика рукопожатий
+>   SSH, дропов шины и отклонённого SNMP SET, а не отладочный мусор; уровень управляется
+>   `log.level`. `TODO`/`FIXME` в коде нет. `go run golang.org/x/tools/cmd/deadcode@latest -test
+>   ./...` не находит ничего недостижимого в коде Phase 7; он сообщает только о существовавших
+>   ранее помощниках — набор конструкторов ошибок `internal/netconf/ops` (`AccessDenied`,
+>   `DataExists` и их `newPathError`), `restconf.conflict`, `Payload.leafDocument`,
+>   `l2.Manager.erase` и методах `stub` из `internal/store/store_test.go` (они реализуют
+>   интерфейс `Store` и потому нужны). Эти символы принадлежат предыдущим фазам и оставлены:
+>   удаление конструкторов сломало бы соответствие тегам RFC 6241, а удаление методов `stub` —
+>   интерфейс.
+> - **`docs/testing.md`, `docs/glossary.md` и `docs/faq.md` не написаны** — они и не входят в
+>   Phase 7 (в `docs/README.md` остаются в разделе «Planned»).
 
 ---
 

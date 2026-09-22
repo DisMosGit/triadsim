@@ -134,7 +134,7 @@ never parses them, and `yang/yang_test.go` checks their node names against the m
 
 ```bash
 go run ./cmd/simulator version
-# triadsim 0.1.0-dev
+# triadsim 0.1.0
 ```
 
 `Version` is a package variable, so a release build can override it:

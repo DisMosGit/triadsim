@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-22
+
 ### Added
 
 - Repository skeleton: `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `ROADMAP.md`, MIT `LICENSE.md`.
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/metrics`: `simulator_uptime_seconds` and `simulator_snmp_requests_total{op}` on a private Prometheus registry served from `/metrics`.
 - `cmd/simulator` cobra entrypoint with the `start` command that loads config, sets up logging and runs the EventBus.
 - `start` now builds the store, router and seed device, loads `startup.json`, seeds on the first boot and serves the SNMP and Prometheus endpoints until SIGINT/SIGTERM.
-- Tooling: `scripts/check.sh`, `scripts/demo.sh` (stub) and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
+- Tooling: `scripts/check.sh`, `scripts/demo.sh` and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
 - Documentation: `docs/README.md` (index), `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/protocols/SNMP.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
 - `internal/router`: type-driven schema tree (`Node`, `Children`) that maps protocol element trees onto router paths.
 - `internal/netconf`: SSH subsystem `netconf` with an ephemeral ed25519 host key and no authentication, one NETCONF session per channel with a monotonic session-id.
@@ -67,9 +69,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/cli`: `alarm inject --type radioLinkDown|radioLinkDegraded|radioLinkUp --link <name>` drives the simulation API of a running simulator; `dump --format json|xml --content config|nonconfig|all` fetches its datastore over RESTCONF; `config validate --file <path>`; and `version`.
 - Tests: `internal/cli/crossdomain_test.go` reproduces the whole scenario in process (one RESTCONF request → alarm → PTP holdover → trap on a real UDP socket → metric), and `test/integration` (build tag `integration`, Docker) runs the compiled simulator in a container against real NETCONF, SNMP and HTTP clients.
 - Documentation: `docs/demo.md` (the cross-domain scenario step by step), `docs/metrics.md` and `docs/cli.md`; `docs/protocols/RADIO-RRL.md`, `SNMP.md`, `NETCONF.md` and `RESTCONF.md` updated for the implemented radio domain, traps, notification payload and simulation endpoints.
+- Dependency: `google.golang.org/grpc` and `github.com/openconfig/gnmi` (`proto/gnmi`), the Phase 7 addition to the closed list, are pinned in `internal/tools/tools.go` and used only by the optional gNMI plane.
+- `internal/gnmi`: the optional gNMI service on `:9339` (disabled by default, no TLS, no authentication) — `Capabilities` announcing the four models and the `JSON`, `JSON_IETF` and `PROTO` encodings; `Get` for `CONFIG`/`STATE`/`OPERATIONAL`/`ALL` returning one update per leaf; `Set` with `replace`/`update`/`delete` applied as one atomic data-tree edit against the running datastore plus a `ConfigChanged` publication; and `Subscribe` with `ONCE` and `STREAM`/`ON_CHANGE`, mapping EventBus events onto model paths and re-reading the affected subtree.
+- `internal/gnmi`: gNMI path conversion (list keys as `[key=value]`, module prefixes stripped, `origin` restricted to the four module names or their namespaces), a documented gRPC status mapping for the router and data-tree errors, and a `Clock` seam for notification timestamps.
+- `internal/router`: `Schema()` returns the whole type-driven schema tree (`SchemaNode`) without touching a datastore, so a schema dump or a documentation generator needs no device instance.
+- `yang`: the four documentation-only modules `sim-device.yang`, `sim-radio-link.yang`, `sim-l2-switching.yang` and `sim-sync.yang`, embedded by the new `yang` package; `yang/yang_test.go` checks their module names, namespaces and node coverage against the model schema.
+- `internal/cli`: `schema` prints the model schema tree as JSON (node path, owning module, kind, list key, leaf type) and `schema --yang [--module <name>]` prints the embedded YANG modules.
+- `start` now serves gNMI when `gnmi.enabled` is true and reports `gnmi_port`/`gnmi_addr` in its startup record; the listener is closed with the other planes.
+- Tests: `internal/gnmi/*_test.go` (49 cases driving the real service over gRPC with the generated client) and `test/integration/gnmi_test.go`, which runs the compiled binary in a container and exercises `Capabilities`, `Get`, `Set` and `Subscribe`.
+- Tooling: `scripts/demo.sh` is a real end-to-end demo — it builds the binary, starts it on a temporary configuration, fails and restores the radio link, asserts the PTP holdover and the alarm counters, and shows the trap (`snmptrapd`), the notifications (`DEMO_NETCONF=1`) and the metrics; `scripts/check.sh` and `make lint` now also vet the integration build tag and run the container tests when Docker is available, and `make integration` and `make check` were added.
+- Documentation: `docs/protocols/gNMI.md` (paths, encodings, RPCs, event mapping, error codes, limits, interoperability); `README.md` gained an architecture diagram, the gNMI quick start, a `snmptrapd` output sample and a real `ssh -s netconf` transcript; `docs/cli.md` documents `schema`; `docs/architecture.md`, `docs/README.md` and `docs/demo.md` were updated.
+- ADRs: `0002-model-vs-yang`, `0003-modular-monolith` and `0004-gosnmp-ssh-xml`.
 
 ### Notes
 
+- Phase 7 is complete and v0.1.0 is tagged: gNMI `Get`/`Set`/`Subscribe` work against the same
+  router as the other planes, all `docs/protocols/*.md` references exist, `scripts/demo.sh`
+  reproduces the cross-domain scenario of §3.6, and `go vet ./...`, `go test ./...` and
+  `go test -tags=integration ./...` are green. The deliberate limits of the gNMI plane (no TLS, no
+  authentication, leaf-level `Set`, no `SAMPLE`/`POLL`, no schema retrieval) are recorded in
+  `docs/protocols/gNMI.md` and in the Phase 7 deviations of [ROADMAP.md](ROADMAP.md).
 - Phase 6 is complete: one `POST /api/simulate/radio-failure` produces the radio alarm, the PTP
   holdover, the SNMP trap, the NETCONF notification and the Prometheus counter, which is the
   cross-domain scenario of `.docs/desicion.md` §3.6. `simulator alarm inject`, `dump`,

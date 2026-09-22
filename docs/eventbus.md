@@ -79,11 +79,16 @@ for e := range ch {
 | SNMP trap sender (`internal/snmp`) | implemented (Phase 6.3) |
 | Prometheus counters (`internal/metrics`) | implemented (Phase 6.4) |
 | `internal/sync` reactions | implemented (Phase 6.5): a radio alarm drives the PTP clock |
+| gNMI `STREAM`/`ON_CHANGE` (`internal/gnmi`) | implemented (Phase 7): one subscription per open stream |
 
 The NETCONF dispatcher (`internal/netconf/notif`) takes one bus subscription for the whole server,
 renders each event once as an RFC 5277 `<notification>` document and queues it for every subscribed
 session, so a client that does not read loses its own notifications (logged as `notification
 dropped, session is not reading`) without delaying the other sessions or the publisher.
+
+A gNMI `STREAM`/`ON_CHANGE` stream takes its own subscription and releases it with `Unsubscribe`
+when the stream ends; each event is mapped onto the model path it changed and that subtree is
+re-read from the running datastore (see [protocols/gNMI.md](protocols/gNMI.md#54-subscribe)).
 
 The SNMP trap sender (`internal/snmp/trap.go`) also owns one subscription for the whole server: it
 maps an event to a vendor trap OID, resolves the payload through the router and writes one

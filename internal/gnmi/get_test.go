@@ -154,3 +154,21 @@ func TestGetRejectsUnsupportedEncoding(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
+
+func TestGetAppliesTheRequestPrefix(t *testing.T) {
+	ts := newTestServer(t, false)
+
+	response, err := ts.client.Get(context.Background(), &gnmi.GetRequest{
+		Prefix:   path(elem("interfaces"), keyed("interface", "name", "radio0")),
+		Path:     []*gnmi.Path{path(elem("radio-link"), elem("tx-power"))},
+		Encoding: gnmi.Encoding_JSON_IETF,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, response.GetNotification(), 1)
+	notification := response.GetNotification()[0]
+	assert.Equal(t, "interfaces/interface[name=radio0]/radio-link/tx-power",
+		relativeString(notification.GetPrefix()))
+	require.Len(t, notification.GetUpdate(), 1)
+	assert.JSONEq(t, `20`, string(notification.GetUpdate()[0].GetVal().GetJsonIetfVal()))
+}

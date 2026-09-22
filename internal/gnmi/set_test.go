@@ -200,3 +200,19 @@ func TestSetWithoutOperationsIsANoOp(t *testing.T) {
 	default:
 	}
 }
+
+func TestSetAppliesTheRequestPrefix(t *testing.T) {
+	ts := newTestServer(t, false)
+	ctx := context.Background()
+
+	response, err := ts.client.Set(ctx, &gnmi.SetRequest{
+		Prefix: path(elem("system-info")),
+		Update: []*gnmi.Update{{
+			Path: path(elem("location")),
+			Val:  stringValue("field-site-7"),
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "system-info", relativeString(response.GetPrefix()))
+	assert.Equal(t, "field-site-7", getString(ctx, t, ts.store, "system-info/location"))
+}

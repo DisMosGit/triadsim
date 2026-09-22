@@ -25,6 +25,10 @@ func (s *service) Set(ctx context.Context, req *gnmi.SetRequest) (*gnmi.SetRespo
 	if err != nil {
 		return nil, err
 	}
+	prefixPath, err := gnmiPath(prefix)
+	if err != nil {
+		return nil, statusError(err)
+	}
 
 	operations := make([]*operation, 0,
 		len(req.GetDelete())+len(req.GetReplace())+len(req.GetUpdate()))
@@ -50,7 +54,7 @@ func (s *service) Set(ctx context.Context, req *gnmi.SetRequest) (*gnmi.SetRespo
 		operations = append(operations, op)
 	}
 
-	response := &gnmi.SetResponse{Prefix: mustPath(prefix)}
+	response := &gnmi.SetResponse{Prefix: prefixPath}
 	if len(operations) == 0 {
 		return response, nil
 	}
@@ -188,13 +192,4 @@ func resultOperation(op datatree.Op) gnmi.UpdateResult_Operation {
 	default:
 		return gnmi.UpdateResult_UPDATE
 	}
-}
-
-// mustPath converts a canonical path whose syntax the router already accepted.
-func mustPath(path string) *gnmi.Path {
-	converted, err := gnmiPath(path)
-	if err != nil {
-		return &gnmi.Path{}
-	}
-	return converted
 }

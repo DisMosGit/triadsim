@@ -64,12 +64,12 @@ Ports: SNMP `1161`, traps `1162`, NETCONF `1830` (unprivileged, not the IANA `83
 
 ## Code style
 
-- Go 1.23+, `gofmt`, `go vet`.
-- Prefer stdlib and the approved stack: `gosnmp`, `x/crypto/ssh`, `encoding/xml`, `chi`, `cobra`, `log/slog`, `prometheus`, `testify`, `testcontainers`, `yaml.v3`.
+- Go 1.27+, `gofmt`, `go vet` (also `go vet -tags=integration ./...`).
+- Prefer stdlib and the approved stack: `gosnmp`, `x/crypto/ssh`, `encoding/xml`, `chi`, `cobra`, `log/slog`, `prometheus`, `testify`, `testcontainers`, `yaml.v3`, and `grpc` + `openconfig/gnmi` for the optional gNMI plane only.
 - No external runtime dependencies beyond standard Go modules.
 - Models use `path`/`xml`/`json` tags. Read-only nodes use `config:"false"`.
 - Each model has `Validate() error`.
-- No auth anywhere. SNMP community `public`; NETCONF SSH accepts any login/password; RESTCONF has no auth.
+- No auth anywhere. SNMP community `public`; NETCONF SSH accepts any login/password; RESTCONF and gNMI have no auth (gNMI also has no TLS).
 - STP/RSTP and PTP/SyncE are simplified state machines, not real protocols.
 - Keep code AI-friendly: stable APIs, common patterns, no obscure libraries.
 
