@@ -308,15 +308,16 @@ func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.S
 		if !binding.Writable {
 			return nil, gosnmp.ReadOnly, uint8(i + 1)
 		}
-		path, ok := a.router.PathForOID(varbind.Name)
-		if !ok {
+		// The binding carries the model path, so an object of a table that grew
+		// at runtime — a learned MAC entry — is writable too.
+		if binding.Path == "" {
 			return nil, gosnmp.NoSuchName, uint8(i + 1)
 		}
 		value, err := fromPDU(varbind)
 		if err != nil {
 			return nil, gosnmp.WrongType, uint8(i + 1)
 		}
-		result, err := a.router.Convert(path.String(), value)
+		result, err := a.router.Convert(binding.Path, value)
 		if err != nil {
 			switch {
 			case errors.Is(err, router.ErrReadOnly):

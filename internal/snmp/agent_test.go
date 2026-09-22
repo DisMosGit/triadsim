@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,4 +248,75 @@ func TestServeRequiresListen(t *testing.T) {
 	agent := New(newTestRouter(t), Options{Addr: "127.0.0.1:0"})
 
 	assert.Error(t, agent.Serve(context.Background()))
+}
+
+// fdbPortOID is dot1dTpFdbPort, the bridge forwarding database port column.
+const fdbPortOID = "1.3.6.1.2.1.17.4.3.1.2"
+
+// A walk of dot1dTpFdbPort reports every forwarding-database entry as
+// MAC -> bridge port, which is the Phase 4 acceptance criterion.
+func TestWalkBridgeFdbPort(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	pdus, err := client.WalkAll(fdbPortOID)
+	require.NoError(t, err)
+	require.Len(t, pdus, 1, "the seeded device has one static forwarding entry")
+
+	// 02:00:00:00:00:02 is the eth1 MAC and 3 is its bridge port number.
+	assert.Equal(t, fdbPortOID+".2.0.0.0.0.2", strings.TrimPrefix(pdus[0].Name, "."))
+	assert.Equal(t, gosnmp.Integer, pdus[0].Type)
+	assert.Equal(t, 3, pdus[0].Value)
+}
+
+func TestGetBridgeIdentityAndSTPPort(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Get([]string{
+		"1.3.6.1.2.1.17.1.1.0",
+		"1.3.6.1.2.1.17.2.15.1.3.2",
+		"1.3.6.1.2.1.17.7.1.4.3.1.1.100",
+	})
+	require.NoError(t, err)
+	require.Equal(t, gosnmp.NoError, result.Error)
+
+	assert.Equal(t, []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}, result.Variables[0].Value)
+	assert.Equal(t, 5, result.Variables[1].Value, "eth0 forwards")
+	assert.Equal(t, []byte("DATA"), result.Variables[2].Value)
+}
+
+func TestGetHighCapacityCounter(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Get([]string{"1.3.6.1.2.1.31.1.1.1.6.2", "1.3.6.1.2.1.2.2.1.10.2"})
+	require.NoError(t, err)
+	require.Equal(t, gosnmp.NoError, result.Error)
+
+	assert.Equal(t, gosnmp.Counter64, result.Variables[0].Type)
+	assert.Equal(t, uint64(0), result.Variables[0].Value)
+	assert.Equal(t, gosnmp.Counter32, result.Variables[1].Type)
+}
+
+func TestSetBridgeAgingTime(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Set([]gosnmp.SnmpPDU{
+		{Name: "1.3.6.1.2.1.17.4.2.0", Type: gosnmp.Integer, Value: 600},
+	})
+	require.NoError(t, err)
+	require.Equal(t, gosnmp.NoError, result.Error)
+
+	got, err := client.Get([]string{"1.3.6.1.2.1.17.4.2.0"})
+	require.NoError(t, err)
+	assert.Equal(t, 600, got.Variables[0].Value)
+
+	// The model bounds the aging time, so a short one is rejected.
+	result, err = client.Set([]gosnmp.SnmpPDU{
+		{Name: "1.3.6.1.2.1.17.4.2.0", Type: gosnmp.Integer, Value: 1},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, gosnmp.WrongValue, result.Error)
 }

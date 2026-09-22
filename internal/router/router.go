@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/DisMosGit/triadsim/internal/model"
@@ -126,8 +127,13 @@ func New(root *model.Device, st store.Store) (*Router, error) {
 		}
 		r.byOID[object.oid] = object
 		if object.path != "" {
-			if _, duplicate := r.byPath[object.path]; duplicate {
-				return nil, fmt.Errorf("router: duplicate path %s", object.path)
+			// One model leaf may back several MIB objects, for example
+			// ifAdminStatus and ifOperStatus of the same interface. The map
+			// keeps the richest mapping, so a leaf whose writable MIB object
+			// needs a decoded value keeps that decoder.
+			existing, duplicate := r.byPath[object.path]
+			if duplicate && existing.decode != nil {
+				continue
 			}
 			r.byPath[object.path] = object
 		}
@@ -200,8 +206,74 @@ func buildObjects(root *model.Device) ([]indexedObject, error) {
 		}
 	}
 
+	objects = append(objects, tableObjects(root, scopeSTPPort, "stp/state/ports/port[port=", func(port string) string {
+		if instance := interfaceIndexOf(root, port); instance > 0 {
+			return strconv.Itoa(instance)
+		}
+		return ""
+	})...)
+	objects = append(objects, tableObjects(root, scopeMAC, "mac-table/entry[mac-address=", macInstance)...)
+	objects = append(objects, tableObjects(root, scopeVLAN, "vlans/vlan[id=", func(id string) string { return id })...)
+
 	sort.Slice(objects, func(i, j int) bool { return CompareOID(objects[i].oid, objects[j].oid) < 0 })
 	return objects, nil
+}
+
+// tableObjects applies the rules of one table scope to the instances of a list.
+// keyed returns the sub-identifier of one instance, or an empty string when the
+// instance has none; prefix is the beginning of the model path of an entry,
+// which each key closes with a bracket.
+func tableObjects(root *model.Device, kind scope, prefix string, keyed func(key string) string) []indexedObject {
+	var objects []indexedObject
+
+	for _, key := range tableKeys(root, kind) {
+		index := keyed(key)
+		if index == "" {
+			continue
+		}
+		base := prefix + key + "]"
+		for _, rule := range objectRules {
+			if rule.scope != kind {
+				continue
+			}
+			objects = append(objects, indexedObject{
+				oid:      indexOID(rule.oid, index),
+				path:     base + "/" + rule.suffix,
+				typ:      rule.typ,
+				writable: rule.writable,
+				convert:  rule.convert,
+				decode:   rule.decode,
+			})
+		}
+	}
+	return objects
+}
+
+// tableKeys returns the list keys of one table scope: bridge port names, MAC
+// addresses or VLAN identifiers.
+func tableKeys(root *model.Device, kind scope) []string {
+	switch kind {
+	case scopeSTPPort:
+		keys := make([]string, 0, len(root.STP.Ports))
+		for _, port := range root.STP.Ports {
+			keys = append(keys, port.Port)
+		}
+		return keys
+	case scopeMAC:
+		keys := make([]string, 0, len(root.MACTable.Entries))
+		for _, entry := range root.MACTable.Entries {
+			keys = append(keys, entry.MAC)
+		}
+		return keys
+	case scopeVLAN:
+		keys := make([]string, 0, len(root.VLANs))
+		for _, vlan := range root.VLANs {
+			keys = append(keys, strconv.Itoa(int(vlan.ID)))
+		}
+		return keys
+	default:
+		return nil
+	}
 }
 
 // checkPath reports whether path resolves to a leaf in root.

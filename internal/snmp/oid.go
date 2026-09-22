@@ -69,6 +69,8 @@ func asn1Type(t router.SNMPType) gosnmp.Asn1BER {
 		return gosnmp.Gauge32
 	case router.TypeCounter32:
 		return gosnmp.Counter32
+	case router.TypeCounter64:
+		return gosnmp.Counter64
 	case router.TypeTimeTicks:
 		return gosnmp.TimeTicks
 	case router.TypeOpaqueDouble:
@@ -95,7 +97,16 @@ func toPDU(binding router.Binding) gosnmp.SnmpPDU {
 			pdu.Value = value
 			return pdu
 		}
+	case router.TypeCounter64:
+		if value, ok := asUint64(binding.Value); ok {
+			pdu.Value = value
+			return pdu
+		}
 	case router.TypeOctetString:
+		if value, ok := binding.Value.([]byte); ok {
+			pdu.Value = value
+			return pdu
+		}
 		if value, ok := asString(binding.Value); ok {
 			pdu.Value = value
 			return pdu
@@ -189,6 +200,25 @@ func asUint32(value any) (uint32, bool) {
 		return uint32(v), true
 	case int:
 		return uint32(v), true
+	default:
+		return 0, false
+	}
+}
+
+func asUint64(value any) (uint64, bool) {
+	switch v := value.(type) {
+	case uint8:
+		return uint64(v), true
+	case uint16:
+		return uint64(v), true
+	case uint32:
+		return uint64(v), true
+	case uint64:
+		return v, true
+	case int:
+		return uint64(v), true
+	case int64:
+		return uint64(v), true
 	default:
 		return 0, false
 	}

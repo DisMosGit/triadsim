@@ -2,8 +2,11 @@ package router
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
+
+	"github.com/DisMosGit/triadsim/internal/model"
 )
 
 // EnterpriseOID is the vendor subtree of the simulator (placeholder number).
@@ -19,6 +22,7 @@ const (
 	TypeObjectID     SNMPType = "ObjectIdentifier"
 	TypeGauge32      SNMPType = "Gauge32"
 	TypeCounter32    SNMPType = "Counter32"
+	TypeCounter64    SNMPType = "Counter64"
 	TypeTimeTicks    SNMPType = "TimeTicks"
 	TypeOpaqueDouble SNMPType = "OpaqueDouble"
 )
@@ -34,6 +38,15 @@ const (
 	scopeInterface
 	// scopeRadio exposes a leaf of the first radio link as a scalar object.
 	scopeRadio
+	// scopeSTPPort exposes a leaf of every bridge port as a table column whose
+	// instance is the bridge port number, the interface index of the port.
+	scopeSTPPort
+	// scopeMAC exposes a leaf of every forwarding-database entry as a table
+	// column whose instance is the 6-octet MAC address.
+	scopeMAC
+	// scopeVLAN exposes a leaf of every VLAN as a table column whose instance is
+	// the VLAN identifier.
+	scopeVLAN
 )
 
 // objectRule maps a model path to one SNMP object.
@@ -50,6 +63,10 @@ type objectRule struct {
 // objectRules is the static OID table. It is applied to the model template, so
 // interface names, indexes and the presence of a radio link come from the
 // model rather than from hardcoded paths.
+//
+// The interface columns follow MIB-II ifTable and the 64-bit ifXTable counters;
+// the bridge columns follow BRIDGE-MIB (dot1dStpPortTable, dot1dTpFdbTable,
+// dot1dTpAgingTime) and the Q-BRIDGE-MIB VLAN name table.
 var objectRules = []objectRule{
 	{scope: scopeScalar, suffix: "system-info/description", oid: "1.3.6.1.2.1.1.1", typ: TypeOctetString},
 	{scope: scopeScalar, suffix: "system-info/uptime", oid: "1.3.6.1.2.1.1.3", typ: TypeTimeTicks, convert: ticksFromSeconds},
@@ -57,9 +74,43 @@ var objectRules = []objectRule{
 	{scope: scopeScalar, suffix: "system-info/name", oid: "1.3.6.1.2.1.1.5", typ: TypeOctetString, writable: true},
 	{scope: scopeScalar, suffix: "system-info/location", oid: "1.3.6.1.2.1.1.6", typ: TypeOctetString, writable: true},
 
+	// MIB-II ifTable.
 	{scope: scopeInterface, suffix: "name", oid: "1.3.6.1.2.1.2.2.1.2", typ: TypeOctetString},
 	{scope: scopeInterface, suffix: "type", oid: "1.3.6.1.2.1.2.2.1.3", typ: TypeInteger, convert: ifTypeValue},
+	{scope: scopeInterface, suffix: "mtu", oid: "1.3.6.1.2.1.2.2.1.4", typ: TypeInteger},
+	{scope: scopeInterface, suffix: "mac-address", oid: "1.3.6.1.2.1.2.2.1.6", typ: TypeOctetString, convert: macOctets},
+	{scope: scopeInterface, suffix: "enabled", oid: "1.3.6.1.2.1.2.2.1.7", typ: TypeInteger,
+		convert: ifOperStatusValue, decode: truthFromInt, writable: true},
 	{scope: scopeInterface, suffix: "enabled", oid: "1.3.6.1.2.1.2.2.1.8", typ: TypeInteger, convert: ifOperStatusValue},
+	{scope: scopeInterface, suffix: "counters/in-octets", oid: "1.3.6.1.2.1.2.2.1.10", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/in-ucast-pkts", oid: "1.3.6.1.2.1.2.2.1.11", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/in-discards", oid: "1.3.6.1.2.1.2.2.1.13", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/in-errors", oid: "1.3.6.1.2.1.2.2.1.14", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/out-octets", oid: "1.3.6.1.2.1.2.2.1.16", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/out-ucast-pkts", oid: "1.3.6.1.2.1.2.2.1.17", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/out-discards", oid: "1.3.6.1.2.1.2.2.1.19", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "counters/out-errors", oid: "1.3.6.1.2.1.2.2.1.20", typ: TypeCounter32},
+	{scope: scopeInterface, suffix: "name", oid: "1.3.6.1.2.1.31.1.1.1.1", typ: TypeOctetString},
+	{scope: scopeInterface, suffix: "counters/in-octets", oid: "1.3.6.1.2.1.31.1.1.1.6", typ: TypeCounter64},
+	{scope: scopeInterface, suffix: "counters/in-ucast-pkts", oid: "1.3.6.1.2.1.31.1.1.1.7", typ: TypeCounter64},
+	{scope: scopeInterface, suffix: "counters/out-octets", oid: "1.3.6.1.2.1.31.1.1.1.10", typ: TypeCounter64},
+	{scope: scopeInterface, suffix: "counters/out-ucast-pkts", oid: "1.3.6.1.2.1.31.1.1.1.11", typ: TypeCounter64},
+
+	// BRIDGE-MIB: the bridge identity, the spanning-tree scalars and the
+	// forwarding database.
+	{scope: scopeScalar, suffix: "stp/state/bridge-address", oid: "1.3.6.1.2.1.17.1.1", typ: TypeOctetString, convert: macOctets},
+	{scope: scopeScalar, suffix: "stp/state/bridge-priority", oid: "1.3.6.1.2.1.17.2.2", typ: TypeInteger, writable: true},
+	{scope: scopeSTPPort, suffix: "priority", oid: "1.3.6.1.2.1.17.2.15.1.2", typ: TypeInteger, writable: true},
+	{scope: scopeSTPPort, suffix: "state", oid: "1.3.6.1.2.1.17.2.15.1.3", typ: TypeInteger, convert: stpPortStateValue},
+	{scope: scopeSTPPort, suffix: "state", oid: "1.3.6.1.2.1.17.2.15.1.4", typ: TypeInteger, convert: stpPortEnableValue},
+	{scope: scopeSTPPort, suffix: "path-cost", oid: "1.3.6.1.2.1.17.2.15.1.5", typ: TypeInteger, writable: true},
+	{scope: scopeScalar, suffix: "mac-table/aging-time", oid: "1.3.6.1.2.1.17.4.2", typ: TypeInteger, writable: true},
+	{scope: scopeMAC, suffix: "mac-address", oid: "1.3.6.1.2.1.17.4.3.1.1", typ: TypeOctetString, convert: macOctets},
+	{scope: scopeMAC, suffix: "port", oid: "1.3.6.1.2.1.17.4.3.1.2", typ: TypeInteger},
+	{scope: scopeMAC, suffix: "type", oid: "1.3.6.1.2.1.17.4.3.1.3", typ: TypeInteger, convert: fdbStatusValue},
+
+	// Q-BRIDGE-MIB: the static VLAN name table.
+	{scope: scopeVLAN, suffix: "name", oid: "1.3.6.1.2.1.17.7.1.4.3.1.1", typ: TypeOctetString},
 
 	{scope: scopeRadio, suffix: "rssi", oid: EnterpriseOID + ".1.1.1", typ: TypeOpaqueDouble},
 	{scope: scopeRadio, suffix: "fade-margin", oid: EnterpriseOID + ".1.1.2", typ: TypeOpaqueDouble},
@@ -135,6 +186,75 @@ func ticksFromSeconds(v any) any {
 	return v
 }
 
+// macOctets converts a MAC address to the six octets an OctetString object
+// carries. A value that does not parse is passed through unchanged.
+func macOctets(v any) any {
+	text, ok := v.(string)
+	if !ok {
+		return v
+	}
+	address, err := net.ParseMAC(text)
+	if err != nil || len(address) != 6 {
+		return v
+	}
+	return []byte(address)
+}
+
+// macInstance renders a MAC address as the six-sub-identifier instance of a
+// forwarding-database entry.
+func macInstance(text string) string {
+	address, err := net.ParseMAC(text)
+	if err != nil || len(address) != 6 {
+		return ""
+	}
+	parts := make([]string, 0, len(address))
+	for _, octet := range address {
+		parts = append(parts, strconv.Itoa(int(octet)))
+	}
+	return strings.Join(parts, ".")
+}
+
+// stpPortStateValue maps a port state onto dot1dStpPortState. The RSTP
+// discarding state is reported as blocking(2).
+func stpPortStateValue(v any) any {
+	name, ok := v.(string)
+	if !ok {
+		return v
+	}
+	switch name {
+	case "disabled":
+		return 1
+	case "blocking", "discarding":
+		return 2
+	case "listening":
+		return 3
+	case "learning":
+		return 4
+	case "forwarding":
+		return 5
+	default:
+		return 1
+	}
+}
+
+// stpPortEnableValue maps a port state onto dot1dStpPortEnable: a disabled
+// port is disabled(2), every other state is enabled(1).
+func stpPortEnableValue(v any) any {
+	if name, ok := v.(string); ok && name == "disabled" {
+		return 2
+	}
+	return 1
+}
+
+// fdbStatusValue maps a forwarding-database entry type onto dot1dTpFdbStatus:
+// learned entries are learned(3), permanent ones are management(5).
+func fdbStatusValue(v any) any {
+	if typ, ok := v.(string); ok && typ == "static" {
+		return 5
+	}
+	return 3
+}
+
 // CompareOID compares two OIDs component by component, numerically when a
 // component is a number. It returns -1, 0 or 1, matching strings.Compare.
 func CompareOID(a, b string) int {
@@ -171,4 +291,21 @@ func CompareOID(a, b string) int {
 // instanceOID appends a numeric instance to a base OID.
 func instanceOID(base string, instance int) string {
 	return base + "." + strconv.Itoa(instance)
+}
+
+// indexOID appends an already rendered instance, such as a MAC address in its
+// sub-identifier form, to a base OID.
+func indexOID(base, index string) string {
+	return base + "." + index
+}
+
+// interfaceIndexOf returns the 1-based interface index of an interface name, or
+// zero when the name is not an interface.
+func interfaceIndexOf(root *model.Device, name string) int {
+	for i := range root.Interfaces {
+		if root.Interfaces[i].Name == name {
+			return i + 1
+		}
+	}
+	return 0
 }
