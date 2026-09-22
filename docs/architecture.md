@@ -50,15 +50,15 @@ synchronization — behind one managed-object model and one management plane.
 | `internal/store` | running/candidate/startup, diff/commit/rollback, JSON persistence | implemented (Phase 1.5) |
 | `internal/clock` | injectable clock and `FakeClock` | implemented |
 | `internal/model` | managed-object structs with `path`/`xml`/`json` tags | radio, L2, sync, device (Phases 1.1-1.4) |
-| `internal/router` | path ↔ model, OID ↔ path, RPC dispatch | Phase 1 |
+| `internal/router` | path ↔ model, OID ↔ path, RPC dispatch, commit validation | implemented (Phase 1.6) |
 | `internal/radio` | RRL: link budget, RSSI, ATPC, ACM, alarms | Phase 6 |
 | `internal/l2` | VLAN/QinQ, MAC table, STP, LLDP, counters | Phase 4 |
 | `internal/sync` | PTP, SyncE, ESMC/SSM, holdover | Phase 5 |
-| `internal/snmp` | SNMP v2c agent and trap sender | Phase 1 |
+| `internal/snmp` | SNMP v2c agent (`get`/`next`/`bulk`/`set`) | implemented (Phase 1.8); traps Phase 6 |
 | `internal/netconf` | SSH subsystem, framing, RPC, notifications | Phase 2 |
 | `internal/restconf` | chi router, codecs, CRUD | Phase 4 |
 | `internal/gnmi` | optional gRPC service | Phase 7 |
-| `internal/metrics` | Prometheus collectors and `/metrics` | Phase 1 |
+| `internal/metrics` | Prometheus collectors and `/metrics` | implemented (Phase 1.9) |
 | `internal/tools` | blank imports pinning the approved dependency stack | build tag `tools` only |
 
 ## Dependency rules
@@ -66,6 +66,8 @@ synchronization — behind one managed-object model and one management plane.
 - `internal/model` depends on nothing.
 - `internal/clock` and `internal/log` are leaf utilities.
 - `internal/event` depends only on `internal/clock`.
+- `internal/router` depends on `model` and `store`: it resolves paths and OIDs against a model
+  template and reads and writes leaf values in the store.
 - `internal/radio`, `internal/l2`, `internal/sync` depend on `model`, `store` and `event`.
 - `internal/snmp`, `internal/netconf`, `internal/restconf`, `internal/gnmi` depend on `router`,
   `store` and `event`.
@@ -87,13 +89,30 @@ The other domains are standalone managed-object trees: `VLAN`, `MACEntry`, `STPS
 type validates its ranges and enumerations in `Validate()`, and read-only nodes carry
 `config:"false"`, which the router rejects when a management plane tries to write them.
 
+## Router
+
+`internal/router` bridges protocol addresses and the model. A path is parsed into segments
+(`a/b[c=d]/e`); a list element is selected by the field tagged `key:"true"`, whose `path` tag is
+the predicate name. Navigation is reflective, so a node's Go type and its `config:"false` access
+come from the schema rather than from a second table.
+
+`Get`, `Set`, `Delete`, `List` and `Dispatch` read and write the store through those resolved
+paths, and `Bindings` returns every exposed OID with its value in numeric OID order, which is what
+the SNMP agent walks. The OID tables in `router/oid.go` cover the MIB-II system and interface
+groups and the vendor `1.3.6.1.4.1.99999.1.*` radio objects. Interface columns use the 1-based
+index of the interface in `Device.Interfaces`; the vendor radio objects are scalar (`.0`) because
+the MVP has one radio link.
+
+`Validate` is the `store.Validator`: it applies a candidate snapshot to a deep copy of the model
+template and runs `Device.Validate()`, so a commit can never store a value the model rejects.
+
 ## Data flow
 
 1. A management plane receives a request and resolves the target node through `internal/router`.
 2. Reads go to `internal/store` (running by default, candidate on request); writes go to the
    addressed datastore.
-3. A commit validates the candidate, applies it to running and persists startup, then publishes
-   `ConfigChanged` on the bus.
+3. A commit validates the candidate through `router.Validate`, applies it to running and persists
+   startup; notifications and `ConfigChanged` follow in Phase 2.
 4. Domains subscribe to the events they care about. `internal/radio` reacting to a simulated
    failure publishes `AlarmRaised`; `internal/sync` turns that into a PTP `StateTransition`, and
    the management planes turn both into traps, notifications and metrics. No domain calls
@@ -107,7 +126,12 @@ SIGTERM and runs the cobra command tree. `start` then:
 1. loads and validates `configs/default.yaml` (`internal/config`),
 2. installs the JSON stderr logger at the configured level (`internal/log`),
 3. creates the `EventBus` (`internal/event`) with a `clock.RealClock`,
-4. blocks until the context is cancelled, then closes the bus and exits 0.
+4. builds the store (`internal/store`) and router (`internal/router`) around
+   `model.DefaultDevice` and installs `router.Validate` as the commit validator,
+5. loads the persisted startup; when the running datastore is empty it seeds the default device
+   into the candidate and commits it, which writes `startup.json`,
+6. listens on the SNMP and metrics ports, then blocks until the context is cancelled and shuts
+   both planes down.
 
 See [store.md](store.md), [eventbus.md](eventbus.md) and [config.md](config.md) for the
 contracts behind those steps, and `docs/protocols/` for the per-protocol references.

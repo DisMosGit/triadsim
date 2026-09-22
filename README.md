@@ -12,10 +12,10 @@ exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF
 (optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
 process, no Web UI (that lives in a separate repository).
 
-> **Status: Phase 1 — model + store.** The repository builds, tests and starts; the
-> configuration/logging/EventBus/clock foundations plus the managed-object models (radio, L2,
-> sync, device) and the in-memory running/candidate/startup store are in place. The router, SNMP
-> agent and later domain logic land in Phases 1.6–7; see [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 1 — SNMP v2c walk.** The repository builds, tests and starts; the foundations,
+> managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router
+> and the SNMP v2c agent with the Prometheus endpoint are in place. NETCONF, RESTCONF and the
+> domain logic land in Phases 2–7; see [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 
@@ -28,6 +28,11 @@ make test                        # or: go test ./...
 
 # run (loads configs/default.yaml, logs JSON to stderr, Ctrl-C to stop)
 go run ./cmd/simulator start --config configs/default.yaml
+
+# in another shell: the SNMP agent answers on :1161
+snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2   # radio0, eth0, eth1
+snmpget  -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.1.0  # RSSI as a float
+curl -s localhost:9090/metrics | grep simulator_
 ```
 
 Configuration lives in [`configs/default.yaml`](configs/default.yaml); every field has a
@@ -48,8 +53,10 @@ Ports are deliberately unprivileged so the simulator runs without root.
 
 ## Demo
 
-The canonical end-to-end check (available from Phase 4, when RESTCONF lands; the full
-cross-domain scenario is Phase 6):
+The Phase 1 end-to-end check is the SNMP walk in Quick start: `ifDescr` returns the three
+interfaces and the vendor RSSI OID returns a float.
+
+The RESTCONF check (available from Phase 4) and the full cross-domain scenario (Phase 6):
 
 ```bash
 curl http://localhost:8080/restconf/data/sim-device:system-info

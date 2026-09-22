@@ -205,41 +205,59 @@
 
 
 ### 1.6. Router: path ↔ model, OID ↔ path
-- [ ] `internal/router/path.go` — парсер `a/b[c=d]/e` · `M` 🧪
-- [ ] `internal/router/reflect.go` — навигация по `path`-тегам через `reflect` · `L` 🧪
-- [ ] `internal/router/oid.go` — таблица `OID → path` для стандартных MIB (`ifDescr`, `ifOperStatus`) · `M` 🧪
-- [ ] Vendor-таблица `1.3.6.1.4.1.99999.*` для RSSI, fade-margin, capacity, alarm-status · `M` 🧪
-- [ ] `Dispatch(op Op) Result` для RPC · `M` 🧪
-- [ ] Тесты: round-trip `path → model → path`, `OID → path → value` · `M` 🧪
-- [ ] Коммит: `feat(router): path + oid dispatch` · `L` 🧪
+- [x] `internal/router/path.go` — парсер `a/b[c=d]/e` · `M` 🧪
+- [x] `internal/router/reflect.go` — навигация по `path`-тегам через `reflect` · `L` 🧪
+- [x] `internal/router/oid.go` — таблица `OID → path` для стандартных MIB (`ifDescr`, `ifOperStatus`) · `M` 🧪
+- [x] Vendor-таблица `1.3.6.1.4.1.99999.*` для RSSI, fade-margin, capacity, alarm-status · `M` 🧪
+- [x] `Dispatch(op Op) Result` для RPC · `M` 🧪
+- [x] Тесты: round-trip `path → model → path`, `OID → path → value` · `M` 🧪
+- [x] Коммит: `feat(router): path + oid dispatch` · `L` 🧪
 
 **DoD:** router находит `interfaces/interface[name=radio0]/radio-link/tx-power` по path и по OID.
 
 ### 1.7. Seed-модель по умолчанию
-- [ ] `internal/model/seed.go` — `DefaultDevice()` с `radio0`, `eth0`, `eth1` · `M` 🧪
-- [ ] Загрузка из `startup.json`, если есть · `M` 🧪
-- [ ] Коммит: `feat(model): default seed + startup load` · `M` 🧪
+- [x] `internal/model/seed.go` — `DefaultDevice()` с `radio0`, `eth0`, `eth1` · `M` 🧪
+- [x] Загрузка из `startup.json`, если есть · `M` 🧪
+- [x] Коммит: `feat(model): default seed + startup load` · `M` 🧪
 
 ### 1.8. SNMP agent (v2c, get/walk)
-- [ ] `internal/snmp/agent.go` — `gosnmp.NewHandler()` · `M` 🔌 🧪
-- [ ] `internal/snmp/oid.go` — построение OID-дерева из router · `M` 🧪
-- [ ] Обработка `Get`, `GetNext`, `GetBulk` для community `public` · `M` 🧪
-- [ ] Порт `:1161` (не `:161`, чтобы не требовать root) · `S`
-- [ ] Запуск из `cmd/simulator` · `S`
-- [ ] Коммит: `feat(snmp): agent v2c get/walk` · `L` 🧪
+- [x] `internal/snmp/agent.go` — `gosnmp.NewHandler()` · `M` 🔌 🧪
+- [x] `internal/snmp/oid.go` — построение OID-дерева из router · `M` 🧪
+- [x] Обработка `Get`, `GetNext`, `GetBulk` для community `public` · `M` 🧪
+- [x] Порт `:1161` (не `:161`, чтобы не требовать root) · `S`
+- [x] Запуск из `cmd/simulator` · `S`
+- [x] Коммит: `feat(snmp): agent v2c get/walk` · `L` 🧪
 
 **DoD:** `snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2` возвращает `radio0`, `eth0`, `eth1`; vendor OID RSSI отдаёт float.
 
 ### 1.9. Метрики (Prometheus)
-- [ ] `internal/metrics/metrics.go` — `simulator_uptime_seconds`, `simulator_snmp_requests_total` · `M` 🧪
-- [ ] HTTP endpoint `/metrics` на `:9090` · `S` 🔌
-- [ ] Коммит: `feat(metrics): prometheus endpoint` · `M` 🧪
+- [x] `internal/metrics/metrics.go` — `simulator_uptime_seconds`, `simulator_snmp_requests_total` · `M` 🧪
+- [x] HTTP endpoint `/metrics` на `:9090` · `S` 🔌
+- [x] Коммит: `feat(metrics): prometheus endpoint` · `M` 🧪
 
 ### 1.10. Документация SNMP
-- [ ] `docs/protocols/SNMP.md` — OID tree, MIB-таблица, traps, примеры `snmpwalk`/`snmptrapd` · `M` 📝
-- [ ] Коммит: `docs(snmp): oid tree + examples` · `M` 📝
+- [x] `docs/protocols/SNMP.md` — OID tree, MIB-таблица, traps, примеры `snmpwalk`/`snmptrapd` · `M` 📝
+- [x] Коммит: `docs(snmp): oid tree + examples` · `M` 📝
 
 **✅ Phase 1 завершена, когда:** SNMP walk отдаёт `ifDescr` и vendor OID RSSI; `Validate()` покрыт тестами; `/metrics` работает.
+
+> **Отклонения при реализации 1.6–1.10:**
+> - У `gosnmp` нет серверной части: `gosnmp.NewHandler()` — это клиент. Агент — свой UDP-цикл
+>   на `net.PacketConn`, декодирование через `(*gosnmp.GoSNMP).SnmpDecodePacket`, ответ —
+>   `(*gosnmp.SnmpPacket).MarshalMsg`. `SnmpDecodePacket` добавляет ведущую точку к OID, поэтому
+>   router/snmp нормализуют её при поиске.
+> - Store расширен типами листьев `uint8`, `uint16`, `uint64` (1.5), иначе значения моделей
+>   пришлось бы терять или приводить с риском. Формат `startup.json` остался версии 1.
+> - Списки получили тег `key:"true"` на ключевом поле (`Interface.Name`, `ModProfile.ID`, …):
+>   router адресует элемент как `interfaces/interface[name=radio0]`.
+> - Router зависит от `model` и `store` (добавлено в правила зависимостей architecture.md).
+> - Vendor-радио-объекты — скаляры `.0` для единственного радио-линка; `alarm-status`
+>   (`…99999.1.1.8`) отложен до 6.2 (нет поля модели), `simSync*`/`simL2*` — до 5.6/4.11.
+> - RSSI/fade-margin/tx-power отдаются как `OpaqueDouble` (RFC 5342): в SMIv2 нет float.
+> - `start` получил тестовую подстановку адресов (`runtimeDeps`), чтобы юнит-тесты не занимали
+>   порты 1161/9090.
+> - Загрузка `startup.json` — это `store.LoadStartup` (1.5); `model/seed.go` только строит
+>   `DefaultDevice`, а `router.Seed` пишет её в store.
 
 ---
 

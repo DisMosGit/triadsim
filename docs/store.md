@@ -54,9 +54,10 @@ type Store interface {
 Paths are router paths, for example
 `interfaces/interface[name=radio0]/radio-link/tx-power`. `Get` and `Delete` return `ErrNotFound`
 for a path that is absent from the addressed datastore. Values are the managed-object leaves
-(`int`, `uint32`, `float64`, `bool`, `string`), so the store stays independent of the model
-types; `Set` rejects any other Go type with `ErrInvalidValue` and any path that is empty, has a
-leading or trailing slash, or contains an empty segment with `ErrInvalidPath`.
+(`bool`, `int`, `uint8`, `uint16`, `uint32`, `uint64`, `float64`, `string`), so the store stays
+independent of the model types; `Set` rejects any other Go type with `ErrInvalidValue` and any
+path that is empty, has a leading or trailing slash, or contains an empty segment with
+`ErrInvalidPath`.
 
 `List` returns the paths **strictly below** a prefix in lexicographic order. `List(ctx, ds, "")`
 lists the whole datastore. The prefix itself is never included, because the store holds leaves
@@ -112,15 +113,15 @@ restart:
 }
 ```
 
-`Load` accepts only version `1` and the five kinds (`bool`, `int`, `uint32`, `float64`,
-`string`); malformed JSON, another version or an unknown kind is an error. A **missing** file is
-not an error: it yields an empty map, because the first boot has no startup file yet.
-`(*Memory).LoadStartup` loads the configured file into running, candidate and startup and is a
-no-op when persistence is disabled or the file does not exist.
+`Load` accepts only version `1` and the supported kinds (`bool`, `int`, `uint8`, `uint16`,
+`uint32`, `uint64`, `float64`, `string`); malformed JSON, another version or an unknown kind is an
+error. A **missing** file is not an error: it yields an empty map, because the first boot has no
+startup file yet. `(*Memory).LoadStartup` loads the configured file into running, candidate and
+startup and is a no-op when persistence is disabled or the file does not exist.
 
 ## Status
 
 The in-memory implementation is complete: `internal/store/memory.go` (the three datastores),
-`diff.go` (`diffValues`) and `persist.go` (`Save`/`Load`). The store is not yet wired into
-`start`; the router connects the datastore paths to SNMP, NETCONF and RESTCONF in the phases
-that follow.
+`diff.go` (`diffValues`) and `persist.go` (`Save`/`Load`). `start` wires it up: it loads the
+persisted startup, seeds `DefaultDevice` into the candidate and commits it on the first boot, and
+installs the router as the commit validator.

@@ -100,15 +100,20 @@ This yields the base OID `1.3.6.1.2.1` for all MIB-II objects .
 
 TriadSim uses the enterprise OID space for domain-specific metrics that have no standard MIB representation. The assigned enterprise number is `99999` (placeholder for development).
 
+The radio objects below are **implemented in Phase 1.8**. They are scalar objects (`.0`) because the MVP has one radio link; `internal/router/oid.go` builds them from the first interface whose `type` is `radio`.
+
 | OID | Object | Type | Access | Description |
 |---|---|---|---|---|
-| `1.3.6.1.4.1.99999.1.1.1` | `simRadioRssi` | Float | read-only | Current RSSI in dBm |
-| `1.3.6.1.4.1.99999.1.1.2` | `simRadioFadeMargin` | Float | read-only | Fade margin in dB |
-| `1.3.6.1.4.1.99999.1.1.3` | `simRadioCapacity` | Unsigned32 | read-only | Current capacity in Mbps |
-| `1.3.6.1.4.1.99999.1.1.4` | `simRadioTxPower` | Float | read-write | Configured TX power in dBm |
-| `1.3.6.1.4.1.99999.2.1.1` | `simSyncPtpState` | Integer | read-only | PTP state (1=freerun, 2=master, 3=holdover) |
-| `1.3.6.1.4.1.99999.2.1.2` | `simSyncPtpOffset` | Float | read-only | PTP offset in nanoseconds |
-| `1.3.6.1.4.1.99999.3.1.1` | `simL2VlanCount` | Unsigned32 | read-only | Number of configured VLANs |
+| `1.3.6.1.4.1.99999.1.1.1.0` | `simRadioRssi` | OpaqueDouble | read-only | Current RSSI in dBm |
+| `1.3.6.1.4.1.99999.1.1.2.0` | `simRadioFadeMargin` | OpaqueDouble | read-only | Fade margin in dB |
+| `1.3.6.1.4.1.99999.1.1.3.0` | `simRadioCapacity` | Gauge32 | read-only | Current capacity in Mbps |
+| `1.3.6.1.4.1.99999.1.1.4.0` | `simRadioTxPower` | OpaqueDouble | read-write | Configured TX power in dBm |
+| `1.3.6.1.4.1.99999.1.1.5.0` | `simRadioAtpcEnabled` | Integer TruthValue | read-write | ATPC enabled (1) or disabled (2) |
+| `1.3.6.1.4.1.99999.1.1.6.0` | `simRadioAcmProfile` | Integer | read-only | Active ACM profile index (1-12) |
+| `1.3.6.1.4.1.99999.1.1.7.0` | `simRadioAcmCapacity` | Gauge32 | read-only | Capacity of the active profile in Mbps |
+| `1.3.6.1.4.1.99999.1.1.8.0` | `simRadioAlarmStatus` | Integer | read-only | Radio alarm status — **Phase 6.2**, no model leaf yet |
+
+Floats are encoded as [RFC 5342](https://www.rfc-editor.org/rfc/rfc5342) `OpaqueDouble` (`0x79`) because SMIv2 has no native floating-point type; `snmpget`/`snmpwalk` display them as opaque floats. The other vendor objects (`simSyncPtp*`, `simSyncSyncE*`, `simL2VlanCount`) arrive with their domains in Phases 4, 5 and 6 and are not registered yet.
 
 ---
 
@@ -134,20 +139,24 @@ The following textual conventions from RFC 2579 are used by TriadSim MIB objects
 
 ### 4.2. Standard OID Reference
 
-| Object | OID | Type | Access |
-|---|---|---|---|
-| `sysDescr` | `1.3.6.1.2.1.1.1` | DisplayString | read-only |
-| `sysObjectID` | `1.3.6.1.2.1.1.2` | OBJECT IDENTIFIER | read-only |
-| `sysUpTime` | `1.3.6.1.2.1.1.3` | TimeTicks | read-only |
-| `sysContact` | `1.3.6.1.2.1.1.4` | DisplayString | read-write |
-| `sysName` | `1.3.6.1.2.1.1.5` | DisplayString | read-write |
-| `sysLocation` | `1.3.6.1.2.1.1.6` | DisplayString | read-write |
-| `ifDescr` | `1.3.6.1.2.1.2.2.1.2` | DisplayString | read-only |
-| `ifType` | `1.3.6.1.2.1.2.2.1.3` | INTEGER | read-only |
-| `ifOperStatus` | `1.3.6.1.2.1.2.2.1.8` | INTEGER | read-only |
-| `ifInOctets` | `1.3.6.1.2.1.2.2.1.10` | Counter32 | read-only |
-| `ifOutOctets` | `1.3.6.1.2.1.2.2.1.16` | Counter32 | read-only |
-| `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) |
+| Object | OID | Type | Access | Implemented |
+|---|---|---|---|---|
+| `sysDescr` | `1.3.6.1.2.1.1.1` | DisplayString | read-only | Phase 1.8 (`system-info/description`) |
+| `sysObjectID` | `1.3.6.1.2.1.1.2` | OBJECT IDENTIFIER | read-only | Phase 1.8 (constant `1.3.6.1.4.1.99999.1`) |
+| `sysUpTime` | `1.3.6.1.2.1.1.3` | TimeTicks | read-only | Phase 1.8 (`system-info/uptime`, ×100) |
+| `sysContact` | `1.3.6.1.2.1.1.4` | DisplayString | read-write | Phase 1.8 |
+| `sysName` | `1.3.6.1.2.1.1.5` | DisplayString | read-write | Phase 1.8 |
+| `sysLocation` | `1.3.6.1.2.1.1.6` | DisplayString | read-write | Phase 1.8 |
+| `ifIndex` | `1.3.6.1.2.1.2.2.1.1` | INTEGER | read-only | Phase 1.8 (1-based position) |
+| `ifDescr` | `1.3.6.1.2.1.2.2.1.2` | DisplayString | read-only | Phase 1.8 |
+| `ifType` | `1.3.6.1.2.1.2.2.1.3` | INTEGER | read-only | Phase 1.8 (radio → `other(1)`, ethernet → `ethernetCsmacd(6)`) |
+| `ifOperStatus` | `1.3.6.1.2.1.2.2.1.8` | INTEGER | read-only | Phase 1.8 (`up(1)`/`down(2)`) |
+| `ifInOctets` | `1.3.6.1.2.1.2.2.1.10` | Counter32 | read-only | Phase 4.11 |
+| `ifOutOctets` | `1.3.6.1.2.1.2.2.1.16` | Counter32 | read-only | Phase 4.11 |
+| `snmpTrapOID` | `1.3.6.1.2.1.11.4.1` | OBJECT IDENTIFIER | — (trap varbind) | Phase 6.3 |
+
+Scalar objects are addressed with the `.0` instance (`sysDescr.0`); interface columns append the
+1-based interface index (`ifDescr.1`). The agent walks these instances in numeric OID order.
 
 The `ifDescr` object is particularly important for TriadSim, as it exposes the simulated interface names (`radio0`, `eth0`, `eth1`) to the NMS .
 
@@ -194,9 +203,19 @@ GetResponse:
   error-status: noError(0)
 ```
 
+**Implementation (Phase 1.8).** A `SetRequest` writes the `running` datastore (writable-running
+semantics). The agent resolves every varbind through `internal/router`, rejects a read-only
+object with `ReadOnly` (`noSuchName`, `wrongType` and `wrongValue` are used for an unknown OID, a
+bad value type and a value the model rejects), then builds the whole proposed running
+configuration, validates it with the router and only then applies the writes. A multi-varbind
+`Set` is therefore all-or-nothing: a value the model rejects leaves the device unchanged.
+
 ---
 
 ## 6. Traps
+
+> **Not implemented yet.** The Phase 1.8 agent answers requests only; the trap sender and the
+> event wiring land in Phase 6.3. This section describes the target behaviour.
 
 ### 6.1. Trap PDU Format
 
@@ -299,44 +318,37 @@ TriadSim does not compile or parse MIB files. Instead, the `internal/router` pac
 
 ### 8.2. OID Registration
 
-Each model that exposes SNMP objects registers its OID tree at startup:
+`internal/router/oid.go` holds one static table of `objectRule` entries. Each rule names a model
+path (or a path suffix for a table column) and the OID base, ASN.1 type and access:
 
 ```go
-type SNMPRegistration struct {
-    OID         string
-    ModelPath   string
-    Type        ASN1Type
-    Access      Access  // read-only, read-write
-    Description string
+type objectRule struct {
+    scope    scope     // scalar, interface column or radio scalar
+    suffix   string    // model path, or path relative to the interface / radio-link
+    oid      string    // base OID, without the instance
+    typ      SNMPType  // Integer, OctetString, Gauge32, TimeTicks, OpaqueDouble, ...
+    writable bool
+    convert  func(any) any          // model value -> SNMP value (enums, units)
+    decode   func(any) (any, error) // SNMP value -> model value (TruthValue)
 }
 ```
 
-Example registration for radio link objects:
-
-```go
-var radioRegistrations = []SNMPRegistration{
-    {
-        OID:         "1.3.6.1.4.1.99999.1.1.1",
-        ModelPath:   "radio-link/rssi",
-        Type:        ASN1Float,
-        Access:      ReadOnly,
-        Description: "Current RSSI in dBm",
-    },
-    {
-        OID:         "1.3.6.1.4.1.99999.1.1.4",
-        ModelPath:   "radio-link/tx-power",
-        Type:        ASN1Float,
-        Access:      ReadWrite,
-        Description: "Configured TX power in dBm",
-    },
-}
-```
+The router applies the rules to the model template, so interface names, their 1-based indexes
+and the presence of a radio link come from `model.Device` rather than from hardcoded paths. It
+then reads each object's current value from the store and returns sorted `Binding`s. The agent's
+`internal/snmp/oid.go` indexes those bindings by OID for the request loop and normalises each
+value to the exact Go type gosnmp's marshaller expects.
 
 ### 8.3. Table Handling
 
 SNMP tables (such as `ifTable` and `dot1dTpFdbTable`) are exposed as OID subtrees with instance identifiers appended. For example, `ifDescr.1` is the description of interface index 1 (`radio0`), `ifDescr.2` is `eth0`, and so on .
 
-The `internal/snmp` package implements `GetNextRequest` and `GetBulkRequest` by walking the registered OID tree in lexicographic order. This enables standard `snmpwalk` and `snmpbulkwalk` operations against the simulator.
+`internal/snmp` answers `GetNextRequest` by binary-searching the numerically sorted binding list
+for the first OID strictly after the requested one, and `GetBulkRequest` by repeating that walk
+(`non-repeaters` first, then up to `max-repetitions` per repeater, capped at 100). Reaching the
+end yields `EndOfMibView`, and an exact-miss on `Get` yields `NoSuchObject`, so standard
+`snmpwalk` and `snmpbulkwalk` work against the simulator. The MAC table root
+(`1.3.6.1.2.1.17.4.3`) is registered in Phase 4.11.
 
 ---
 
@@ -348,29 +360,40 @@ The `internal/snmp` package implements `GetNextRequest` and `GetBulkRequest` by 
 go run ./cmd/simulator start --config configs/default.yaml
 ```
 
-The agent listens on UDP port 1161 by default. The port can be overridden:
+The agent listens on UDP port 1161 by default; the port comes from the YAML configuration:
 
-```bash
-go run ./cmd/simulator start --snmp-port 2161
+```yaml
+snmp:
+  port: 2161
 ```
 
 ### 9.2. Testing with snmpwalk
 
 ```bash
-# Walk the system group
+# Walk the system group (sysDescr, sysObjectID, sysUpTime, sysName, ...)
 snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.1
 
-# Walk the interface table
+# Walk the interface table: radio0, eth0, eth1
 snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.2.2.1.2
 
-# Walk the MAC forwarding database
-snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2
+# Walk the vendor radio objects (RSSI, fade margin, capacity, ...)
+snmpwalk -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1
 
-# Get a single vendor OID
+# Get a single vendor OID (float displayed as an opaque double)
 snmpget -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.1.0
+
+# Read-write: set TX power, then read it back
+snmpset -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.4.0 D 25.5
+snmpget -v2c -c public localhost:1161 1.3.6.1.4.1.99999.1.1.4.0
 ```
 
+A request with any community other than `public`, and any SNMPv3 message, is dropped without a
+reply. The MAC forwarding database (`1.3.6.1.2.1.17.4.3.1.2`) is registered in Phase 4.11.
+
 ### 9.3. Receiving Traps
+
+> **Phase 6.3.** The trap sender is not implemented in Phase 1.8; the commands below are the
+> target workflow.
 
 ```bash
 snmptrapd -f -Lo -p 1162

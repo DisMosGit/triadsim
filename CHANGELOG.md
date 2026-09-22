@@ -19,10 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `internal/model`: managed objects for the radio link (`RadioLink`, `ATPC`, `ACM`, `ModProfile`, `LinkBudget`), L2 (`Interface`, `InterfaceCounters`, `VLAN`, `MACEntry`, `STPState`, `LLDPNeighbor`), synchronization (`PTPClock`, `SyncEState`, `QL`, `ESMC`) and the device (`Device`, `SystemInfo`), each with `Validate()` and `path`/`xml`/`json` tags.
 - `internal/store`: in-memory `Memory` implementation of running/candidate/startup with `Diff`, `Commit` (injected `Validator`, atomic apply and persist), `Rollback` and `LoadStartup`, plus the versioned JSON `Save`/`Load` used for `startup.json`.
 - `internal/clock`: injectable `Clock`/`Timer` interfaces with `RealClock` and `FakeClock` test implementation.
+- `internal/router`: path parser for the `a/b[c=d]/e` grammar, reflective navigation over the model `path` tags, MIB-II and vendor OID tables, `Get`/`Set`/`Delete`/`List`/`Dispatch`, SNMP `Bindings` and the `store.Validator` that validates a candidate against a model copy.
+- `internal/model`: `DefaultDevice()` seed with `radio0`, `eth0`, `eth1` and the 12-row ACM profile table.
+- `internal/snmp`: SNMP v2c agent answering `Get`, `GetNext` and `GetBulk` for community `public`, plus `SetRequest` with MIB access checks and whole-device validation; traps arrive in Phase 6.
+- `internal/metrics`: `simulator_uptime_seconds` and `simulator_snmp_requests_total{op}` on a private Prometheus registry served from `/metrics`.
 - `cmd/simulator` cobra entrypoint with the `start` command that loads config, sets up logging and runs the EventBus.
+- `start` now builds the store, router and seed device, loads `startup.json`, seeds on the first boot and serves the SNMP and Prometheus endpoints until SIGINT/SIGTERM.
 - Tooling: `scripts/check.sh`, `scripts/demo.sh` (stub) and a `Makefile` with `build`, `test`, `lint`, `run`, `demo`, `clean`.
-- Documentation: `docs/README.md` (index), `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
+- Documentation: `docs/README.md` (index), `docs/architecture.md`, `docs/store.md`, `docs/eventbus.md`, `docs/config.md`, `docs/protocols/SNMP.md`, `docs/adr/0001-record-architecture-decisions.md`, `docs/adr/template.md`.
 
 ### Notes
 
-- Management planes (SNMP v2c, NETCONF, RESTCONF, optional gNMI) and the router land in Phases 1.6–7; the managed-object models (Phase 1.1–1.4) and the store implementation (Phase 1.5) are in place. See [ROADMAP.md](ROADMAP.md).
+- Phase 1 is complete: the SNMP walk returns `ifDescr` and the vendor RSSI OID, and `/metrics` serves the simulator counters. NETCONF, RESTCONF, gNMI and the radio/L2/sync domain logic land in Phases 2–7. See [ROADMAP.md](ROADMAP.md).
