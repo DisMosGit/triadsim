@@ -17,6 +17,7 @@ import (
 	"github.com/DisMosGit/triadsim/internal/metrics"
 	"github.com/DisMosGit/triadsim/internal/model"
 	"github.com/DisMosGit/triadsim/internal/netconf"
+	"github.com/DisMosGit/triadsim/internal/restconf"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/snmp"
 	"github.com/DisMosGit/triadsim/internal/store"
@@ -29,10 +30,11 @@ const shutdownTimeout = 2 * time.Second
 // use ephemeral ports and a temporary file. An empty field falls back to the
 // configuration.
 type runtimeDeps struct {
-	snmpAddr    string
-	netconfAddr string
-	metricsAddr string
-	startupFile string
+	snmpAddr     string
+	netconfAddr  string
+	restconfAddr string
+	metricsAddr  string
+	startupFile  string
 }
 
 // newStartCmd builds the start command. Log records are written to out, which
@@ -44,8 +46,8 @@ func newStartCmd(out io.Writer) *cobra.Command {
 		Use:   "start",
 		Short: "Start the simulator",
 		Long: "Start loads the YAML configuration, installs JSON logging on stderr and runs\n" +
-			"the SNMP v2c agent and the Prometheus endpoint until the process receives\n" +
-			"SIGINT or SIGTERM.",
+			"the SNMP v2c agent, the NETCONF SSH subsystem, the RESTCONF HTTP server and\n" +
+			"the Prometheus endpoint until the process receives SIGINT or SIGTERM.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runStart(cmd.Context(), configPath, out)
@@ -134,9 +136,22 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	}
 	defer func() { _ = netconfServer.Close() }()
 
-	serveErr := make(chan error, 2)
+	restconfServer := restconf.New(r, st, bus, restconf.Options{
+		Addr: deps.restconfAddr,
+		Port: cfg.RESTCONF.Port,
+	})
+	if err := restconfServer.Listen(); err != nil {
+		_ = server.Close()
+		_ = agent.Close()
+		_ = netconfServer.Close()
+		return fmt.Errorf("setup restconf: %w", err)
+	}
+	defer func() { _ = restconfServer.Close() }()
+
+	serveErr := make(chan error, 3)
 	go func() { serveErr <- agent.Serve(ctx) }()
 	go func() { serveErr <- netconfServer.Serve(ctx) }()
+	go func() { serveErr <- restconfServer.Serve(ctx) }()
 
 	logger.InfoContext(ctx, "simulator starting",
 		"config", configPath,
@@ -151,6 +166,7 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 		"startup_file", startupFile,
 		"snmp_addr", agent.Addr().String(),
 		"netconf_addr", netconfServer.Addr().String(),
+		"restconf_addr", restconfServer.Addr().String(),
 		"metrics_addr", metricsListener.Addr().String(),
 	)
 

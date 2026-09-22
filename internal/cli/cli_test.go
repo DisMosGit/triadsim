@@ -62,10 +62,11 @@ func testDeps(t *testing.T) runtimeDeps {
 	t.Helper()
 
 	return runtimeDeps{
-		snmpAddr:    "127.0.0.1:0",
-		netconfAddr: "127.0.0.1:0",
-		metricsAddr: "127.0.0.1:0",
-		startupFile: filepath.Join(t.TempDir(), "startup.json"),
+		snmpAddr:     "127.0.0.1:0",
+		netconfAddr:  "127.0.0.1:0",
+		restconfAddr: "127.0.0.1:0",
+		metricsAddr:  "127.0.0.1:0",
+		startupFile:  filepath.Join(t.TempDir(), "startup.json"),
 	}
 }
 
@@ -160,6 +161,7 @@ func TestRunLogsStartAndStop(t *testing.T) {
 	assert.Equal(t, "debug", start["log_level"])
 	assert.Equal(t, "sim-001", start["device_id"])
 	assert.NotEmpty(t, start["netconf_addr"])
+	assert.NotEmpty(t, start["restconf_addr"])
 
 	cancel()
 
@@ -241,6 +243,34 @@ func TestRunServesMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, body.String(), "simulator_uptime_seconds")
 	assert.Contains(t, body.String(), "simulator_snmp_requests_total")
+}
+
+func TestRunServesRestconf(t *testing.T) {
+	isolateDefaultLogger(t)
+	path := writeConfig(t, "log:\n  level: info\n")
+
+	out := &lockedBuffer{}
+	done, cancel := startRun(t, context.Background(), path, out, testDeps(t))
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	start := waitForRecord(t, out, "simulator starting")
+	address, ok := start["restconf_addr"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, address)
+
+	response, err := http.Get("http://" + address + "/restconf/data/sim-device:system-info")
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+
+	body := new(bytes.Buffer)
+	_, err = body.ReadFrom(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, body.String(), `"sim-device:system-info"`)
+	assert.Contains(t, body.String(), `"device-id":"sim-001"`)
 }
 
 func TestRunServesNetconfSubsystem(t *testing.T) {
