@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `internal/snmp`: every SNMPv2 trap now carries the standard `snmpTrapOID.0` varbind (`1.3.6.1.6.3.1.1.4.1.0`, RFC 3418 `snmpTrapOID ::= { snmpTrap 1 }`); the previous OID (`1.3.6.1.2.1.11.4.1.0`) sits in mib-2's `snmp` group, so standard managers could not identify the trap type.
+- `internal/store`: `startup.json` is replaced atomically (temporary file in the same directory, `fsync`, `rename`, directory `fsync`), so a crash, a kill or a full disk mid-commit cannot leave a truncated document that the next boot refuses to load.
+- `internal/store`: a write or a delete against running is mirrored into candidate, so `<commit>` no longer reverts configuration written by SNMP `SET`, a NETCONF or RESTCONF edit targeting running, or the L2 domain. The same asymmetry used to leave read-only state orphaned in candidate — one MAC aging tick was enough to make every later commit answer `invalid-value` — and could resurrect a deleted list entry.
+- `internal/datatree`: an edit is applied as one atomic batch inside a serialized transaction, so a rejected or interrupted edit cannot leave a partially written datastore and two concurrent edits cannot interleave.
+
+### Changed
+
+- `store.Store` gains `Apply(ctx, ds, values, deletions)` for atomic batches; `router.Router` gains `Transaction` (serialized edits) and `Apply` (converted atomic batch).
+- `Router.SetState` and `Router.DeleteState` write running once and rely on the store's mirroring, which removes the window in which a commit could observe the two datastores apart (`docs/adr/0005-running-write-through.md`).
+- Trap tests assert the specification's varbind OIDs (`sysUpTime.0`, `snmpTrapOID.0`) and their order instead of the implementation's constants.
+
 ## [0.1.0] - 2026-09-22
 
 ### Added

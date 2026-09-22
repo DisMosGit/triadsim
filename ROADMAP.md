@@ -525,9 +525,9 @@
 >   обязательный лист, если шаблон его подставляет (существовавшая и раньше дыра).
 > - **`Router.Snapshot`** отдаёт доменам гидратированный `*model.Device`; `internal/l2` читает
 >   состояние через него, пишет конфигурацию в running (`Router.Set`), а изученное/измеренное —
->   через `Router.SetState` (running + candidate, потому что `Store.Commit` копирует candidate).
->   Конфигурация, записанная по RESTCONF, в candidate не попадает — это осознанный компромисс,
->   к которому стоит вернуться в Phase 6.
+>   через `Router.SetState`. Любая запись в running (RESTCONF, SNMP SET, конфигурация L2)
+>   зеркалится в candidate: Phase 4 отмечала это как осознанный компромисс, Phase 8 его закрыла
+>   (`docs/adr/0005-running-write-through.md`).
 > - **STP: пять фаз, три состояния у RSTP.** Машина проходит классические
 >   disabled → blocking → listening → learning → forwarding; модель принимает оба словаря
 >   (`model.STPPortStates`), а для `rstp` первые три фазы пишутся как `discarding`. Forward delay
@@ -896,6 +896,53 @@
 
 ---
 
+## Phase 8 — Ремедиация P0/P1 🛠
+
+> **Контекст:** аудит v0.1.0 нашёл один дефект провода (P0) и пять дефектов корректности (P1).
+> Эта фаза закрывает их; находки P2/P3 и «Misc» из аудита перечислены в 8.2 как бэклог и в объём
+> фазы не входят.
+
+### 8.1. Исправлено
+
+- [x] `fix(snmp)`: обязательный varbind SNMPv2-Trap-PDU — `snmpTrapOID.0` = `1.3.6.1.6.3.1.1.4.1.0` (RFC 3418, RFC 3416 §4.2.6); исправлены `internal/snmp/trap.go`, `docs/protocols/SNMP.md` · `S` 🧪
+- [x] `test(snmp)`: тесты проверяют литеральные OID из спецификации (`sysUpTime.0`, `snmpTrapOID.0`) и их порядок, а не константы реализации · `S` 🧪
+- [x] `fix(store)`: `startup.json` пишется атомарно (temp-файл, `fsync`, `rename`, `fsync` каталога) · `M` 🧪
+- [x] `fix(store)`: write-through running → candidate; `SetState`/`DeleteState` — одна запись (ADR 0005) · `L` 🧪
+- [x] `fix(datatree)`: `Store.Apply` (атомарный батч), `Router.Transaction`/`Router.Apply`; конвейер правок и SNMP SET — в одной транзакции · `L` 🧪
+- [x] `test(l2)`: регрессия «запись MAC, созданная в running, переживает aging tick и `<commit>`» · `M` 🧪
+- [x] Документация: ADR 0005, `docs/store.md`, `docs/protocols/{SNMP,RESTCONF,NETCONF}.md`, `AGENTS.md`, `CHANGELOG.md` · `M` 📝
+
+**✅ Phase 8 завершена, когда:** тесты спецификации и регрессии зелёные (`go test ./... -race`),
+семантика записей зафиксирована в ADR 0005, бэклог 8.2 перенесён в задачи.
+
+### 8.2. Бэклог (вне объёма фазы)
+
+Из аудита, P2:
+
+- [ ] P2-1: SNMPv2 SET отвечает устаревшими v1-кодами (`noSuchName`/`readOnly`/`badValue`) вместо `noAccess`/`notWritable`/`wrongType`/`wrongValue`/`inconsistentValue`, и всегда с `error-index` 1 · `M` 🧪
+- [ ] P2-2: RESTCONF — ресурсы `/restconf/datastores/{datastore}` (с `?datastore=` как алиасом) и `ETag`/`Last-Modified` · `L` 🧪
+- [ ] P2-3: валидировать загруженный `startup.json` (валидатор уже установлен до `LoadStartup`) · `S` 🧪
+- [ ] P2-4: горячий путь SNMP — кэш индекса OID, структурная копия вместо JSON-клона, bulk-read у стора; сначала измерить бенчмарком · `L` 🧪
+- [ ] P2-5: свести три реализации «flatten datastore» (`flatValues`, `collect`, `runningSnapshot`) и три словаря ошибок к одному API · `L` 🧪
+- [ ] P2-6: покрыть learn × commit целиком (частично закрыто тестом 8.1) · `S` 🧪
+
+P3:
+
+- [ ] P3-1: gNMI `heartbeat_interval` — либо реализовать, либо отвечать `Unimplemented`; сейчас явно задокументирован как игнорируемый (`internal/gnmi/doc.go`, `docs/protocols/gNMI.md`) · `S` 📝
+- [ ] P3-2: percent-encoding в `Location` (`url.PathEscape` в `internal/restconf/path.go`) · `S` 🧪
+- [ ] P3-3: не персистить листья `config:"false"` (фильтр router → store), тогда комментарий в `internal/cli/start.go` про uptime станет правдой · `M` 🧪
+- [ ] P3-4: `Manager.DeleteMAC` нормализует MAC в нижний регистр, а ключ стора хранится как есть, поэтому запись с ключом в верхнем регистре не удаляется: нормализовать ключ при записи либо искать без учёта регистра · `S` 🧪
+
+Misc из аудита:
+
+- [ ] `internal/cli/start.go`: `go func() { _ = server.Serve(metricsListener) }()` глотает ошибку сервера метрик · `S`
+- [ ] L2: многолистовые записи (`writeMAC`, `writeVLAN`, `removeSubtree`) не обёрнуты в `Router.Transaction` · `M` 🧪
+- [ ] `/api/simulate/*`: `decodeJSON` игнорирует неизвестные поля запроса · `S`
+- [ ] `<rpc>` с неразобранным телом завершает сессию вместо ответа `<rpc-error>` · `S`
+- [ ] `Router.List` обрывает весь листинг при одной неразрешимой записи; `getBulk` молча режет `max-repetitions` до 100 · `S`
+
+---
+
 ## 📊 Сводка по фазам
 
 | Фаза | Тема | Задач (примерно) | Оценка |
@@ -908,7 +955,8 @@
 | 5 | Sync (PTP, SyncE, ESMC) | 20 | 3 дня |
 | 6 | Аварии, traps, метрики, CLI | 30 | 4–5 дней |
 | 7 | gNMI + YANG + polish | 25 | 3–4 дня |
-| **Всего** | | **~220** | **~25–31 день** |
+| 8 | Ремедиация P0/P1 | 7 | — |
+| **Всего** | | **~227** | **~25–31 день** |
 
 ---
 
