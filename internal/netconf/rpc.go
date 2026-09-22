@@ -130,6 +130,18 @@ func (sess *session) dispatch(ctx context.Context, rpc incomingRPC) (rpcReply, b
 		}
 		return okReply(rpc.MessageID), false
 
+	case "commit":
+		if err := ops.Commit(ctx, sess.deps(), operation); err != nil {
+			return errorReplyFrom(rpc.MessageID, err), false
+		}
+		return okReply(rpc.MessageID), false
+
+	case "discard-changes":
+		if err := ops.DiscardChanges(ctx, sess.deps(), operation); err != nil {
+			return errorReplyFrom(rpc.MessageID, err), false
+		}
+		return okReply(rpc.MessageID), false
+
 	case "close-session":
 		return okReply(rpc.MessageID), true
 

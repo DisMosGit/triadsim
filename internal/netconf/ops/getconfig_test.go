@@ -19,16 +19,26 @@ import (
 // DefaultDevice.
 func newTestDeps(t *testing.T) Deps {
 	t.Helper()
+
+	deps, _ := newTestDepsWithFile(t)
+	return deps
+}
+
+// newTestDepsWithFile also returns the startup file the store persists commits
+// to.
+func newTestDepsWithFile(t *testing.T) (Deps, string) {
+	t.Helper()
 	ctx := context.Background()
 
-	st := store.NewMemory(store.Options{StartupFile: filepath.Join(t.TempDir(), "startup.json")})
+	startupFile := filepath.Join(t.TempDir(), "startup.json")
+	st := store.NewMemory(store.Options{StartupFile: startupFile})
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
 	require.NoError(t, r.Seed(ctx, store.Candidate))
 	require.NoError(t, st.Commit(ctx))
 
-	return Deps{Router: r, Store: st}
+	return Deps{Router: r, Store: st}, startupFile
 }
 
 // parseOperation parses one operation element from its XML text.
