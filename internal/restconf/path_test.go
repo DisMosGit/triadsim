@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DisMosGit/triadsim/internal/datatree"
 	"github.com/DisMosGit/triadsim/internal/model"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
@@ -51,7 +52,7 @@ func TestParseTarget(t *testing.T) {
 		wantKey       string
 		wantValue     string
 		wantDatastore store.Datastore
-		wantContent   content
+		wantContent   datatree.Content
 		wantCollect   bool
 	}{
 		{

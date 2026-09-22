@@ -11,14 +11,38 @@ import (
 	"github.com/DisMosGit/triadsim/internal/store"
 )
 
+// Content selects which leaves a Read returns, mirroring the RFC 8040
+// ?content= parameter.
+type Content string
+
+// Content selections.
+const (
+	// ContentAll returns configuration and state leaves.
+	ContentAll Content = "all"
+	// ContentConfig returns configuration leaves only; it is the zero value, so
+	// a configuration-only reader such as NETCONF get-config gets it by
+	// default.
+	ContentConfig Content = "config"
+	// ContentNonConfig returns state leaves only.
+	ContentNonConfig Content = "nonconfig"
+)
+
 // ReadOptions selects the subtree and the access a Read returns.
 type ReadOptions struct {
 	// Prefix is a router path. An empty Prefix addresses the model root and
 	// returns a synthetic container whose Children are the root's children.
 	Prefix string
-	// State includes leaves tagged config:"false" (counters, measured levels).
-	// NETCONF get-config leaves them out; RESTCONF GET returns them by default.
-	State bool
+	// Content selects which leaves are returned: ContentConfig (the zero
+	// value), ContentAll or ContentNonConfig.
+	Content Content
+}
+
+// includeConfig reports whether configuration leaves are returned.
+func (o ReadOptions) includeConfig() bool { return o.Content != ContentNonConfig }
+
+// includeState reports whether leaves tagged config:"false" are returned.
+func (o ReadOptions) includeState() bool {
+	return o.Content == ContentAll || o.Content == ContentNonConfig
 }
 
 // Read returns the node at opts.Prefix in ds, resolved against the router
@@ -37,7 +61,7 @@ func Read(ctx context.Context, r *router.Router, ds store.Datastore, opts ReadOp
 	}
 
 	if opts.Prefix == "" {
-		children, err := buildChildren(r, values, "", opts.State)
+		children, err := buildChildren(r, values, "", opts)
 		if err != nil {
 			return nil, err
 		}
@@ -48,7 +72,7 @@ func Read(ctx context.Context, r *router.Router, ds store.Datastore, opts ReadOp
 	if err != nil {
 		return nil, err
 	}
-	children, err := buildChildren(r, values, parent, opts.State)
+	children, err := buildChildren(r, values, parent, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +113,7 @@ func listEntryNode(list *Node, seg router.Segment) *Node {
 // buildChildren returns one node per schema child of prefix that has data.
 // Containers are always returned (possibly empty) and list nodes carry their
 // entries, so a renderer can decide what an empty container means.
-func buildChildren(r *router.Router, values map[string]router.Result, prefix string, state bool) ([]*Node, error) {
+func buildChildren(r *router.Router, values map[string]router.Result, prefix string, opts ReadOptions) ([]*Node, error) {
 	children, err := r.Children(prefix)
 	if err != nil {
 		return nil, err
@@ -101,7 +125,7 @@ func buildChildren(r *router.Router, values map[string]router.Result, prefix str
 		switch child.Kind {
 		case router.KindLeaf:
 			result, ok := values[path]
-			if !ok || (!state && !result.Writable) {
+			if !ok || !selected(result, opts) {
 				continue
 			}
 			nodes = append(nodes, &Node{
@@ -113,14 +137,14 @@ func buildChildren(r *router.Router, values map[string]router.Result, prefix str
 			})
 
 		case router.KindContainer:
-			inner, err := buildChildren(r, values, path, state)
+			inner, err := buildChildren(r, values, path, opts)
 			if err != nil {
 				return nil, err
 			}
 			nodes = append(nodes, &Node{Path: path, Name: child.Name, Kind: router.KindContainer, Children: inner})
 
 		case router.KindList:
-			entries, err := buildEntries(r, values, prefix, child, state)
+			entries, err := buildEntries(r, values, prefix, child, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -130,9 +154,17 @@ func buildChildren(r *router.Router, values map[string]router.Result, prefix str
 	return nodes, nil
 }
 
+// selected reports whether the content selection includes one stored leaf.
+func selected(result router.Result, opts ReadOptions) bool {
+	if result.Writable {
+		return opts.includeConfig()
+	}
+	return opts.includeState()
+}
+
 // buildEntries returns the list instances present in values, ordered by key,
 // each with its key leaf first. The order is what makes list output stable.
-func buildEntries(r *router.Router, values map[string]router.Result, prefix string, list router.Node, state bool) ([]*Node, error) {
+func buildEntries(r *router.Router, values map[string]router.Result, prefix string, list router.Node, opts ReadOptions) ([]*Node, error) {
 	instances := instancesOf(values, prefix, list.Name)
 	if len(instances) == 0 {
 		return nil, nil
@@ -161,7 +193,7 @@ func buildEntries(r *router.Router, values map[string]router.Result, prefix stri
 		}
 
 		keyPath := join(instance.path, list.Key)
-		if result, ok := values[keyPath]; ok && (state || result.Writable) {
+		if result, ok := values[keyPath]; ok && selected(result, opts) {
 			entry.Children = append(entry.Children, &Node{
 				Path:  keyPath,
 				Name:  list.Key,
@@ -171,7 +203,7 @@ func buildEntries(r *router.Router, values map[string]router.Result, prefix stri
 			})
 		}
 
-		inner, err := buildChildren(r, values, instance.path, state)
+		inner, err := buildChildren(r, values, instance.path, opts)
 		if err != nil {
 			return nil, err
 		}

@@ -54,7 +54,6 @@ func TestHandlerAnswersNotImplemented(t *testing.T) {
 		method string
 		target string
 	}{
-		{name: "get data", method: http.MethodGet, target: "/restconf/data/sim-device:system-info"},
 		{name: "operations", method: http.MethodPost, target: "/restconf/operations/sim-l2:clear-mac-table"},
 		{name: "streams", method: http.MethodGet, target: "/restconf/streams/sim-events"},
 		{name: "storm without simulator", method: http.MethodPost, target: "/api/simulate/l2-storm"},

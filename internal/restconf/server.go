@@ -9,15 +9,20 @@ package restconf
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/DisMosGit/triadsim/internal/datatree"
 	"github.com/DisMosGit/triadsim/internal/event"
+	"github.com/DisMosGit/triadsim/internal/restconf/ops"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
 )
@@ -35,6 +40,10 @@ const (
 	shutdownTimeout = 2 * time.Second
 	// readHeaderTimeout bounds reading a request header.
 	readHeaderTimeout = 5 * time.Second
+	// maxBodyBytes caps a request body.
+	maxBodyBytes = 1 << 20
+	// allowDataMethods is the Allow header of the data resource.
+	allowDataMethods = "GET, HEAD, PUT, PATCH, POST, DELETE"
 )
 
 // StormSimulator injects a broadcast storm on one port. It is satisfied by the
@@ -151,27 +160,171 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// deps builds the operation dependencies of the server.
+func (s *Server) deps() ops.Deps {
+	return ops.Deps{Router: s.router, Store: s.store, Bus: s.bus}
+}
+
 // handleData implements the /restconf/data resource: it resolves the target and
 // dispatches by HTTP method.
 func (s *Server) handleData(w http.ResponseWriter, r *http.Request) {
-	if _, httpErr := s.parseTarget(r); httpErr != nil {
+	target, httpErr := s.parseTarget(r)
+	if httpErr != nil {
 		s.writeError(w, r, httpErr)
 		return
 	}
 
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		s.writeError(w, r, notImplemented("GET"))
+		s.handleGet(w, r, target)
 	case http.MethodPut:
-		s.writeError(w, r, notImplemented("PUT"))
+		s.handleWrite(w, r, target, http.MethodPut)
 	case http.MethodPatch:
-		s.writeError(w, r, notImplemented("PATCH"))
+		s.handleWrite(w, r, target, http.MethodPatch)
 	case http.MethodPost:
-		s.writeError(w, r, notImplemented("POST"))
+		s.handleWrite(w, r, target, http.MethodPost)
 	case http.MethodDelete:
-		s.writeError(w, r, notImplemented("DELETE"))
+		s.handleDelete(w, r, target)
 	default:
-		s.writeError(w, r, methodNotAllowed("GET, HEAD, PUT, PATCH, POST, DELETE"))
+		s.writeError(w, r, methodNotAllowed(allowDataMethods))
+	}
+}
+
+// handleGet answers GET and HEAD.
+func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, target *target) {
+	format, httpErr := responseFormat(r.Header.Get("Accept"))
+	if httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+
+	node, opErr := ops.Get(r.Context(), s.deps(), target.Datastore, target.Path, target.Content)
+	if opErr != nil {
+		s.writeTreeError(w, r, opErr)
+		return
+	}
+
+	body, opErr := ops.Encode(format, node)
+	if opErr != nil {
+		s.writeTreeError(w, r, opErr)
+		return
+	}
+
+	w.Header().Set("Content-Type", mediaTypeOf(format))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(body)
+	}
+}
+
+// handleWrite answers PUT, PATCH and POST.
+func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, target *target, method string) {
+	if httpErr := checkWritable(target, method); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+
+	payload, httpErr := s.decodeBody(w, r)
+	if httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+
+	switch method {
+	case http.MethodPut:
+		created := s.resourceMissing(r, target)
+		if opErr := ops.Put(r.Context(), s.deps(), target.Datastore, opsTarget(target), payload); opErr != nil {
+			s.writeTreeError(w, r, opErr)
+			return
+		}
+		if created {
+			w.Header().Set("Location", locationFor(target.Path))
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+
+	case http.MethodPatch:
+		if opErr := ops.Patch(r.Context(), s.deps(), target.Datastore, opsTarget(target), payload); opErr != nil {
+			s.writeTreeError(w, r, opErr)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodPost:
+		created, opErr := ops.Post(r.Context(), s.deps(), target.Datastore, opsTarget(target), payload)
+		if opErr != nil {
+			s.writeTreeError(w, r, opErr)
+			return
+		}
+		w.Header().Set("Location", locationFor(created))
+		w.WriteHeader(http.StatusCreated)
+	}
+}
+
+// handleDelete answers DELETE.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, target *target) {
+	if httpErr := checkWritable(target, http.MethodDelete); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+	if opErr := ops.Delete(r.Context(), s.deps(), target.Datastore, opsTarget(target)); opErr != nil {
+		s.writeTreeError(w, r, opErr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkWritable rejects a write to a datastore or resource that is read-only.
+func checkWritable(target *target, method string) *httpError {
+	if target.Datastore == store.Startup {
+		return methodNotAllowed("GET, HEAD")
+	}
+	if method == http.MethodPut && target.Collection {
+		return methodNotAllowed("GET, HEAD, PATCH, POST, DELETE")
+	}
+	if method == http.MethodPost && !target.Collection {
+		return methodNotAllowed("GET, HEAD, PUT, PATCH, DELETE")
+	}
+	return nil
+}
+
+// resourceMissing reports whether the target resource holds no data yet, which
+// turns a PUT into a 201 Created instead of a 200 OK.
+func (s *Server) resourceMissing(r *http.Request, target *target) bool {
+	_, opErr := ops.Get(r.Context(), s.deps(), target.Datastore, target.Path, datatree.ContentAll)
+	return opErr != nil && opErr.Tag == datatree.TagDataMissing
+}
+
+// decodeBody reads and decodes the request body in its declared media type.
+func (s *Server) decodeBody(w http.ResponseWriter, r *http.Request) (*ops.Payload, *httpError) {
+	format, httpErr := requestFormat(r.Header.Get("Content-Type"))
+	if httpErr != nil {
+		return nil, httpErr
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		return nil, malformedRequest("reading the request body: %v", err)
+	}
+
+	payload, opErr := ops.Decode(format, body)
+	if opErr != nil {
+		return nil, dataTreeHTTPError(opErr)
+	}
+	return payload, nil
+}
+
+// opsTarget converts a parsed target into the operation package's target.
+func opsTarget(target *target) ops.Target {
+	return ops.Target{
+		Path:       target.Path,
+		BasePath:   target.BasePath,
+		Name:       target.Name,
+		Schema:     target.Node,
+		Key:        target.Segment.Key,
+		KeyValue:   target.Segment.Value,
+		Collection: target.Collection,
 	}
 }
 
@@ -187,5 +340,63 @@ func (s *Server) handleStorm(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, methodNotAllowed(http.MethodPost))
 		return
 	}
-	s.writeError(w, r, notImplemented(r.URL.Path))
+	if s.opts.Storm == nil {
+		s.writeError(w, r, notImplemented(r.URL.Path))
+		return
+	}
+
+	var request struct {
+		Port    string `json:"port"`
+		Packets uint32 `json:"packets"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(&request); err != nil {
+		s.writeError(w, r, malformedRequest("malformed request body: %v", err))
+		return
+	}
+	if request.Port == "" {
+		s.writeError(w, r, invalidValue("port must not be empty"))
+		return
+	}
+
+	if err := s.opts.Storm.Storm(r.Context(), request.Port, request.Packets); err != nil {
+		s.writeError(w, r, newHTTPError(http.StatusUnprocessableEntity, errorTypeProtocol, "invalid-value", "%v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", MediaTypeJSON)
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "port": request.Port, "packets": request.Packets})
+}
+
+// mediaTypeOf returns the content type of a format.
+func mediaTypeOf(format ops.Format) string {
+	if format == ops.FormatXML {
+		return MediaTypeXML
+	}
+	return MediaTypeJSON
+}
+
+// requestFormat maps a Content-Type header to a codec format. A missing header
+// defaults to JSON, which keeps plain curl usable.
+func requestFormat(contentType string) (ops.Format, *httpError) {
+	switch strings.TrimSpace(strings.Split(contentType, ";")[0]) {
+	case "", MediaTypeJSON:
+		return ops.FormatJSON, nil
+	case MediaTypeXML:
+		return ops.FormatXML, nil
+	default:
+		return "", unsupportedMedia("Content-Type %q is not supported", contentType)
+	}
+}
+
+// responseFormat maps an Accept header to a codec format.
+func responseFormat(accept string) (ops.Format, *httpError) {
+	switch {
+	case accept == "", strings.Contains(accept, "*/*"), strings.Contains(accept, MediaTypeJSON):
+		return ops.FormatJSON, nil
+	case strings.Contains(accept, MediaTypeXML):
+		return ops.FormatXML, nil
+	default:
+		return "", notAcceptable("Accept %q is not supported", accept)
+	}
 }

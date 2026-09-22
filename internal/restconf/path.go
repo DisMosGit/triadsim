@@ -4,19 +4,17 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/DisMosGit/triadsim/internal/datatree"
 	"github.com/DisMosGit/triadsim/internal/router"
 	"github.com/DisMosGit/triadsim/internal/store"
 )
 
-// content selects which leaves a read returns, mirroring the ?content= query
-// parameter of RFC 8040 §4.8.2.
-type content string
-
-// Content selections.
+// Content selections accepted by the ?content= query parameter (RFC 8040
+// §4.8.2). They are the datatree content selections.
 const (
-	contentAll    content = "all"
-	contentConfig content = "config"
-	contentState  content = "nonconfig"
+	contentAll    = datatree.ContentAll
+	contentConfig = datatree.ContentConfig
+	contentState  = datatree.ContentNonConfig
 )
 
 // target is one parsed RESTCONF request target: the resource path resolved
@@ -41,7 +39,7 @@ type target struct {
 	// Datastore is the addressed datastore.
 	Datastore store.Datastore
 	// Content is the ?content= selection.
-	Content content
+	Content datatree.Content
 }
 
 // parseTarget resolves r's URL against the router schema. A malformed path or
@@ -150,7 +148,7 @@ func parseDatastore(value string) (store.Datastore, *httpError) {
 }
 
 // parseContent maps the ?content= parameter to a content selection.
-func parseContent(value string) (content, *httpError) {
+func parseContent(value string) (datatree.Content, *httpError) {
 	switch value {
 	case "", string(contentAll):
 		return contentAll, nil
@@ -161,6 +159,34 @@ func parseContent(value string) (content, *httpError) {
 	default:
 		return "", malformedRequest("unknown content %q", value)
 	}
+}
+
+// locationFor converts a canonical router path into the RESTCONF URL of a
+// resource: the top node is module-qualified and list keys are rendered as
+// =value instead of the [key=value] predicate.
+func locationFor(path string) string {
+	parsed, err := router.Parse(path)
+	if err != nil {
+		return BasePath + "/data"
+	}
+
+	var builder strings.Builder
+	builder.WriteString(BasePath + "/data/")
+	for i, segment := range parsed.Segments {
+		if i > 0 {
+			builder.WriteByte('/')
+		}
+		if i == 0 {
+			builder.WriteString(router.ModuleFor(path).Name)
+			builder.WriteByte(':')
+		}
+		builder.WriteString(segment.Name)
+		if segment.Key != "" {
+			builder.WriteByte('=')
+			builder.WriteString(segment.Value)
+		}
+	}
+	return builder.String()
 }
 
 // schemaChild returns the schema child named name, or nil.

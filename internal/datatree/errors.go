@@ -72,6 +72,11 @@ func UnknownElement(name string) *Error {
 	return newError(TypeProtocol, TagUnknownElement, "", "unknown element: %s", name)
 }
 
+// Malformed reports a message the server could not parse.
+func Malformed(format string, args ...any) *Error {
+	return newError(TypeRPC, TagMalformedMessage, "", format, args...)
+}
+
 // InvalidValue reports a value the model rejects.
 func InvalidValue(format string, args ...any) *Error {
 	return newError(TypeProtocol, TagInvalidValue, "", format, args...)

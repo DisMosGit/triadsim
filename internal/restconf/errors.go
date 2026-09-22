@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/DisMosGit/triadsim/internal/datatree"
 )
 
 // error-type values of the ietf-restconf error document (RFC 8040 §7.1).
@@ -106,6 +108,47 @@ func asHTTPError(err error) *httpError {
 		return httpErr
 	}
 	return internalError(err)
+}
+
+// writeTreeError maps a data-tree error onto the HTTP status and writes it.
+func (s *Server) writeTreeError(w http.ResponseWriter, r *http.Request, err *datatree.Error) {
+	s.writeError(w, r, dataTreeHTTPError(err))
+}
+
+// dataTreeHTTPError maps an RFC 6241 error tag onto a RESTCONF status code
+// (RFC 8040 §7.3). A rejected snapshot is the roadmap's 422; a rejected leaf
+// value stays a 400.
+func dataTreeHTTPError(err *datatree.Error) *httpError {
+	status := http.StatusInternalServerError
+	switch err.Tag {
+	case datatree.TagMalformedMessage, datatree.TagUnknownElement, datatree.TagMissingElement:
+		status = http.StatusBadRequest
+	case datatree.TagInvalidValue:
+		status = http.StatusBadRequest
+		if err.Validation {
+			status = http.StatusUnprocessableEntity
+		}
+	case datatree.TagAccessDenied:
+		status = http.StatusForbidden
+	case datatree.TagDataExists:
+		status = http.StatusConflict
+	case datatree.TagDataMissing:
+		status = http.StatusNotFound
+	case datatree.TagOperationNotSupported:
+		status = http.StatusNotImplemented
+	case datatree.TagOperationFailed:
+		status = http.StatusInternalServerError
+	case datatree.TagTooBig:
+		status = http.StatusRequestEntityTooLarge
+	}
+
+	errorType := err.Type
+	if errorType == "" {
+		errorType = errorTypeProtocol
+	}
+	httpErr := newHTTPError(status, errorType, err.Tag, "%s", err.Message)
+	httpErr.path = err.Path
+	return httpErr
 }
 
 // writeError writes the RESTCONF error document, defaulting to JSON.

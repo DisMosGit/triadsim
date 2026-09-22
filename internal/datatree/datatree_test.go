@@ -47,7 +47,7 @@ func TestReadStateIncludesReadOnly(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestTree(t)
 
-	root, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{State: true})
+	root, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Content: datatree.ContentAll})
 	require.NoError(t, err)
 
 	radio := findEntry(t, findChild(t, root, "interfaces", "interface"), "radio0")
@@ -55,33 +55,46 @@ func TestReadStateIncludesReadOnly(t *testing.T) {
 	assert.Equal(t, uint32(0), findChild(t, findChild(t, root, "system-info"), "uptime").Value)
 }
 
+func TestReadNonConfigReturnsOnlyState(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newTestTree(t)
+
+	root, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Content: datatree.ContentNonConfig})
+	require.NoError(t, err)
+
+	radio := findEntry(t, findChild(t, root, "interfaces", "interface"), "radio0")
+	link := findChild(t, radio, "radio-link")
+	assert.Equal(t, -72.5, findChild(t, link, "rssi").Value)
+	assert.Nil(t, link.Child("tx-power"), "state-only reads omit configuration leaves")
+}
+
 func TestReadAddressesLeafListEntryAndContainer(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestTree(t)
 
 	mtu, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{
-		Prefix: "interfaces/interface[name=eth0]/mtu",
-		State:  true,
+		Prefix:  "interfaces/interface[name=eth0]/mtu",
+		Content: datatree.ContentAll,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, mtu)
 	assert.Equal(t, router.KindLeaf, mtu.Kind)
 	assert.Equal(t, uint32(1500), mtu.Value)
 
-	vlan, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=100]", State: true})
+	vlan, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=100]", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	require.NotNil(t, vlan)
 	require.Equal(t, router.KindList, vlan.Kind)
 	require.Len(t, vlan.Children, 1)
 	assert.Equal(t, "100", vlan.Children[0].KeyValue)
 
-	system, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "system-info", State: true})
+	system, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "system-info", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	require.NotNil(t, system)
 	assert.Equal(t, "sim-001", findChild(t, system, "device-id").Value)
 
 	// An instance the datastore does not hold is "no data", not an error.
-	missing, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=999]", State: true})
+	missing, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=999]", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	assert.Nil(t, missing)
 }
@@ -92,7 +105,7 @@ func TestReadListsEntriesInKeyOrder(t *testing.T) {
 
 	require.NoError(t, apply(ctx, r, "vlans", datatree.OpMerge, vlan(9, "MGT")))
 
-	list, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan", State: true})
+	list, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	require.Len(t, list.Children, 2)
 	assert.Equal(t, "9", list.Children[0].KeyValue)
@@ -105,13 +118,13 @@ func TestApplyMergesAndDeletes(t *testing.T) {
 
 	require.NoError(t, apply(ctx, r, "vlans", datatree.OpMerge, vlan(200, "VOICE")))
 
-	name, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=200]/name", State: true})
+	name, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=200]/name", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	require.NotNil(t, name)
 	assert.Equal(t, "VOICE", name.Value)
 
 	require.NoError(t, apply(ctx, r, "vlans", datatree.OpDelete, keyed("vlan", "id", "200")))
-	deleted, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=200]/name", State: true})
+	deleted, err := datatree.Read(ctx, r, store.Running, datatree.ReadOptions{Prefix: "vlans/vlan[id=200]/name", Content: datatree.ContentAll})
 	require.NoError(t, err)
 	assert.Nil(t, deleted)
 }
