@@ -1,0 +1,30 @@
+# TriadSim configuration.
+#
+# Every field is optional: Load() starts from the built-in defaults in
+# internal/config and only overrides what is present here. Unknown keys are
+# rejected, so a typo fails at startup instead of being ignored.
+#
+# See docs/config.md for the full reference.
+
+snmp:
+  port: 1161        # SNMP v2c agent (community is fixed to "public")
+  trap-port: 1162   # destination port for traps
+
+netconf:
+  port: 830         # SSH subsystem "netconf"; any login/password is accepted
+
+restconf:
+  port: 8080        # no authentication
+
+metrics:
+  port: 9090        # Prometheus /metrics
+
+gnmi:
+  enabled: false    # optional gRPC service, TLS off
+  port: 9339
+
+log:
+  level: info       # debug | info | warn | error, JSON to stderr
+
+startup:
+  file: startup.json  # persisted startup datastore
