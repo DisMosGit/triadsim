@@ -241,3 +241,39 @@ func TestSubscribeStopsWhenTheClientGoesAway(t *testing.T) {
 		return err != nil && !errors.Is(err, io.EOF)
 	}, 2*time.Second, 10*time.Millisecond)
 }
+
+// A non-zero heartbeat_interval would make the target re-send unchanged
+// values once per interval (gNMI Subscribe specification, Subscription.heartbeat_interval).
+// The simulator does not generate those re-notifications, so the subscription
+// is rejected — like POLL and SAMPLE — instead of being silently ignored while
+// the client waits for heartbeats that never come.
+func TestSubscribeRejectsHeartbeatInterval(t *testing.T) {
+	ts := newTestServer(t, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sub := subscription(path(elem("ptp")))
+	sub.HeartbeatInterval = 5 * 1_000_000_000
+	stream := openStream(ctx, t, ts, &gnmi.SubscriptionList{
+		Mode:         gnmi.SubscriptionList_STREAM,
+		Encoding:     gnmi.Encoding_JSON_IETF,
+		Subscription: []*gnmi.Subscription{sub},
+	})
+
+	_, err := stream.Recv()
+	require.Error(t, err)
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "heartbeat_interval")
+
+	// Without a heartbeat the same subscription is accepted: the sync
+	// response is the first message of the stream.
+	sub = subscription(path(elem("ptp")))
+	stream = openStream(ctx, t, ts, &gnmi.SubscriptionList{
+		Mode:         gnmi.SubscriptionList_STREAM,
+		Encoding:     gnmi.Encoding_JSON_IETF,
+		Subscription: []*gnmi.Subscription{sub},
+	})
+
+	_, err = stream.Recv()
+	require.NoError(t, err)
+}

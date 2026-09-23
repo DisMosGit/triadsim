@@ -19,9 +19,10 @@
 //     subtree. Every operation of one request is applied in a single
 //     data-tree edit, so the request is atomic. union_replace and subtree
 //     values are not supported.
-//   - Subscribe: ONCE and STREAM/ON_CHANGE. SAMPLE, TARGET_DEFINED and POLL
-//     answer Unimplemented. ON_CHANGE maps EventBus events onto model paths
-//     and re-reads the affected subtree.
+//   - Subscribe: ONCE and STREAM/ON_CHANGE. SAMPLE, TARGET_DEFINED, POLL and
+//     a non-zero heartbeat_interval answer Unimplemented — the simulator
+//     never silently skips a behavior the request asked for. ON_CHANGE maps
+//     EventBus events onto model paths and re-reads the affected subtree.
 //
-// Extensions, heartbeat intervals, QoS marking and aggregation are ignored.
+// Extensions, QoS marking and aggregation are ignored.
 package gnmi

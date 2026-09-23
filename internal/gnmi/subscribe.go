@@ -68,6 +68,15 @@ func (s *service) subscriptionPaths(list *gnmi.SubscriptionList) ([]string, erro
 			return nil, status.Errorf(codes.Unimplemented,
 				"subscription mode %s is not supported; use ON_CHANGE", subscription.GetMode())
 		}
+		// The Subscribe specification has an ON_CHANGE subscription re-send
+		// unchanged values once per heartbeat_interval. The simulator does not
+		// generate those re-notifications, so a non-zero interval is rejected
+		// — explicitly, like POLL and SAMPLE — instead of being silently
+		// ignored while the client waits for heartbeats that never come.
+		if subscription.GetHeartbeatInterval() != 0 {
+			return nil, status.Error(codes.Unimplemented,
+				"heartbeat_interval is not supported; subscribe without it")
+		}
 		path, err := joinPrefix(prefix, subscription.GetPath())
 		if err != nil {
 			return nil, err

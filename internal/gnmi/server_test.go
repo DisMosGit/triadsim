@@ -23,6 +23,7 @@ func testRouter(t *testing.T) (*router.Router, *store.Memory) {
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 	require.NoError(t, r.Seed(ctx, store.Running))
 	require.NoError(t, st.Rollback(ctx))
 	return r, st

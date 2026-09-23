@@ -36,6 +36,7 @@ func newTestServer(t *testing.T, withBus bool) *testServer {
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 	require.NoError(t, r.Seed(ctx, store.Running))
 	require.NoError(t, st.Rollback(ctx))
 
