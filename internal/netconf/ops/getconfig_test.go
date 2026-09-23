@@ -36,6 +36,7 @@ func newTestDepsWithFile(t *testing.T) (Deps, string) {
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 	require.NoError(t, r.Seed(ctx, store.Candidate))
 	require.NoError(t, st.Commit(ctx))
 

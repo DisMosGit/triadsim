@@ -1,157 +1,91 @@
 package ops
 
-import (
-	"fmt"
+import "github.com/DisMosGit/triadsim/internal/datatree"
 
-	"github.com/DisMosGit/triadsim/internal/datatree"
-)
+// There is exactly one error vocabulary across the management planes: the
+// datatree.Error of internal/datatree, which carries the RFC 6241 §7.5.3
+// error-type and error-tag values. NETCONF renders it into <rpc-error> and
+// RESTCONF maps it onto HTTP statuses; nothing converts between parallel
+// error types any more. The aliases and forwarding constructors below exist
+// so the operations read concisely — they name the shared definitions and
+// cannot drift from them.
+
+// Error is one failed data-tree operation. Operations return it, directly or
+// wrapped, and the RPC layer renders it into the reply. errors.As finds it
+// through any wrapping, so callers can always recover the protocol tag.
+type Error = datatree.Error
 
 // NETCONF error-type values (RFC 6241 §7.5.3).
 const (
 	// TypeRPC marks protocol-message errors such as a malformed message.
-	TypeRPC = "rpc"
+	TypeRPC = datatree.TypeRPC
 	// TypeProtocol marks operation errors such as an invalid value.
-	TypeProtocol = "protocol"
+	TypeProtocol = datatree.TypeProtocol
 	// TypeApplication marks failures of the device itself, such as a store
 	// write.
-	TypeApplication = "application"
+	TypeApplication = datatree.TypeApplication
 )
 
 // NETCONF error-tag values used by the simulator (RFC 6241 §7.5.3).
 const (
-	TagMalformedMessage      = "malformed-message"
-	TagTooBig                = "too-big"
-	TagMissingAttribute      = "missing-attribute"
-	TagMissingElement        = "missing-element"
-	TagUnknownElement        = "unknown-element"
-	TagInvalidValue          = "invalid-value"
-	TagAccessDenied          = "access-denied"
-	TagDataExists            = "data-exists"
-	TagDataMissing           = "data-missing"
-	TagOperationNotSupported = "operation-not-supported"
-	TagOperationFailed       = "operation-failed"
+	TagMalformedMessage      = datatree.TagMalformedMessage
+	TagTooBig                = datatree.TagTooBig
+	TagMissingAttribute      = datatree.TagMissingAttribute
+	TagMissingElement        = datatree.TagMissingElement
+	TagUnknownElement        = datatree.TagUnknownElement
+	TagInvalidValue          = datatree.TagInvalidValue
+	TagAccessDenied          = datatree.TagAccessDenied
+	TagDataExists            = datatree.TagDataExists
+	TagDataMissing           = datatree.TagDataMissing
+	TagOperationNotSupported = datatree.TagOperationNotSupported
+	TagOperationFailed       = datatree.TagOperationFailed
 )
 
-// SeverityError is the only error severity the simulator reports.
-const SeverityError = "error"
-
-// Error is one NETCONF <rpc-error>. Operations return it, directly or wrapped,
-// and the RPC layer renders it into the reply. errors.As finds it through any
-// wrapping, so callers can always recover the protocol tag.
-type Error struct {
-	// Type is the error-type: TypeRPC, TypeProtocol or TypeApplication.
-	Type string
-	// Tag is the error-tag, for example TagInvalidValue.
-	Tag string
-	// Severity is the error-severity, always SeverityError today.
-	Severity string
-	// Message is the error-message shown to the client.
-	Message string
-	// Path is the optional error-path of the offending node.
-	Path string
-}
-
-// Error implements error.
-func (e *Error) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	return e.Tag
-}
-
-// newError builds an error with the standard severity.
-func newError(errorType, tag, format string, args ...any) *Error {
-	return &Error{
-		Type:     errorType,
-		Tag:      tag,
-		Severity: SeverityError,
-		Message:  fmt.Sprintf(format, args...),
-	}
-}
-
-// newPathError builds an error that also names the offending model path, which
-// the reply renders as error-path.
-func newPathError(errorType, tag, path, format string, args ...any) *Error {
-	err := newError(errorType, tag, format, args...)
-	err.Path = path
-	return err
-}
-
 // Malformed reports a message the server could not parse.
-func Malformed(format string, args ...any) *Error {
-	return newError(TypeRPC, TagMalformedMessage, format, args...)
-}
+func Malformed(format string, args ...any) *Error { return datatree.Malformed(format, args...) }
 
 // TooBig reports a message that exceeded the size limit.
-func TooBig(format string, args ...any) *Error {
-	return newError(TypeRPC, TagTooBig, format, args...)
-}
+func TooBig(format string, args ...any) *Error { return datatree.TooBig(format, args...) }
 
 // MissingAttribute reports a required attribute, for example message-id.
-func MissingAttribute(name string) *Error {
-	return newError(TypeRPC, TagMissingAttribute, "missing attribute %s", name)
-}
+func MissingAttribute(name string) *Error { return datatree.MissingAttribute(name) }
 
 // MissingElement reports a required element, for example <target>.
-func MissingElement(what string) *Error {
-	return newError(TypeProtocol, TagMissingElement, "missing element: %s", what)
-}
+func MissingElement(what string) *Error { return datatree.MissingElement(what) }
 
 // UnknownElement reports an element that does not exist in the data model.
-func UnknownElement(name string) *Error {
-	return newError(TypeProtocol, TagUnknownElement, "unknown element: %s", name)
-}
+func UnknownElement(name string) *Error { return datatree.UnknownElement(name) }
 
 // InvalidValue reports a value the model rejects.
-func InvalidValue(format string, args ...any) *Error {
-	return newError(TypeProtocol, TagInvalidValue, format, args...)
-}
+func InvalidValue(format string, args ...any) *Error { return datatree.InvalidValue(format, args...) }
 
 // AccessDenied reports a write to a read-only node.
-func AccessDenied(path string) *Error {
-	return newPathError(TypeProtocol, TagAccessDenied, path, "access denied: %s is read-only", path)
-}
+func AccessDenied(path string) *Error { return datatree.AccessDenied(path) }
 
 // Denied reports an operation the caller may not perform, for example a
 // confirmed commit while another session owns the confirmed commit in
 // progress. Unlike AccessDenied it names no model path.
-func Denied(format string, args ...any) *Error {
-	return newError(TypeProtocol, TagAccessDenied, format, args...)
-}
+func Denied(format string, args ...any) *Error { return datatree.Denied(format, args...) }
 
 // DataExists reports an element that already exists.
-func DataExists(path string) *Error {
-	return newPathError(TypeProtocol, TagDataExists, path, "data already exists: %s", path)
-}
+func DataExists(path string) *Error { return datatree.DataExists(path) }
 
 // DataMissing reports an element that does not exist.
-func DataMissing(path string) *Error {
-	return newPathError(TypeProtocol, TagDataMissing, path, "data missing: %s", path)
-}
+func DataMissing(path string) *Error { return datatree.DataMissing(path) }
 
-// NotSupported reports an operation or option the simulator does not implement.
+// NotSupported reports an operation or option that is not implemented.
 func NotSupported(format string, args ...any) *Error {
-	return newError(TypeProtocol, TagOperationNotSupported, format, args...)
+	return datatree.NotSupported(format, args...)
 }
 
 // Failed wraps a device failure, for example a store write error.
-func Failed(err error) *Error {
-	return newError(TypeApplication, TagOperationFailed, "%v", err)
-}
+func Failed(err error) *Error { return datatree.Failed(err) }
 
-// fromDataTree maps a data-tree error onto the NETCONF error type, preserving
-// the tag so a reply and the tests see the same protocol error as before the
-// engine moved into internal/datatree. Any other error is an operation failure.
+// fromDataTree passes a data-tree error through without losing its tag and
+// reports any other failure as application/operation-failed.
 func fromDataTree(err error) *Error {
-	treeErr, ok := datatree.AsError(err)
-	if !ok {
-		return Failed(err)
+	if treeErr, ok := datatree.AsError(err); ok {
+		return treeErr
 	}
-	return &Error{
-		Type:     treeErr.Type,
-		Tag:      treeErr.Tag,
-		Severity: SeverityError,
-		Message:  treeErr.Message,
-		Path:     treeErr.Path,
-	}
+	return datatree.Failed(err)
 }

@@ -53,28 +53,32 @@ func okReply(messageID string) rpcReply {
 	return reply
 }
 
+// severityError is the only error-severity the simulator reports (RFC 6241
+// §6.3). It is a rendering concern of the RPC layer: the shared datatree
+// error vocabulary does not carry it.
+const severityError = "error"
+
 // errorReply is a reply carrying exactly one error.
 func errorReply(messageID string, err *ops.Error) rpcReply {
 	reply := newReply(messageID)
 	reply.Errors = []rpcError{{
 		Type:     err.Type,
 		Tag:      err.Tag,
-		Severity: err.Severity,
+		Severity: severityError,
 		Message:  err.Message,
 		Path:     err.Path,
 	}}
 	return reply
 }
 
-// errorReplyFrom turns an operation error into a reply. An error that is not an
-// ops.Error is reported as application/operation-failed, so a device failure is
-// never mistaken for a protocol error.
+// errorReplyFrom turns an operation error into a reply. An error that is not a
+// datatree error is reported as application/operation-failed, so a device
+// failure is never mistaken for a protocol error.
 func errorReplyFrom(messageID string, err error) rpcReply {
 	opErr := &ops.Error{
-		Type:     ops.TypeApplication,
-		Tag:      ops.TagOperationFailed,
-		Severity: ops.SeverityError,
-		Message:  err.Error(),
+		Type:    ops.TypeApplication,
+		Tag:     ops.TagOperationFailed,
+		Message: err.Error(),
 	}
 	_ = errors.As(err, &opErr)
 	return errorReply(messageID, opErr)
