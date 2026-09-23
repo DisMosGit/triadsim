@@ -28,6 +28,8 @@ Integration tests use testcontainers and require Docker.
 - `internal/store` — running/candidate/startup datastores; JSON persistence. Candidate is a
   superset of running: every write to running is mirrored into candidate, so a `<commit>` cannot
   revert an SNMP SET, a running-targeted edit or a domain write (`docs/adr/0005-running-write-through.md`).
+  The persisted `startup.json` holds configuration leaves only (state leaves are volatile and
+  never written) and is validated before it is installed at boot.
 - `internal/router` — path↔model and OID↔path mapping, RPC dispatch, the model schema tree and the MIB tables.
 - `internal/datatree` — shared data-tree read/edit engine behind the NETCONF and RESTCONF codecs.
 - `internal/event` — EventBus on channels. Domains don't import each other; cross-domain reactions flow through events.

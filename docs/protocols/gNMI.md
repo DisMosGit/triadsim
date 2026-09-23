@@ -51,8 +51,12 @@ The implementation lives in `internal/gnmi`: `server.go` (gRPC lifecycle and `Ca
 - No `union_replace`, and no subtree values: `replace` and `update` address one leaf each. A
   container or list value is answered with `INVALID_ARGUMENT`.
 - No `SAMPLE` and no `TARGET_DEFINED` subscription modes, no `POLL`, no `heartbeat_interval`, no
-  `qos`, no `allow_aggregation` and no `gnmi_ext` extensions. They are either ignored or answered
-  with `UNIMPLEMENTED` (see §6).
+  `qos`, no `allow_aggregation` and no `gnmi_ext` extensions. `POLL`, `SAMPLE`, `TARGET_DEFINED`
+  and a non-zero `heartbeat_interval` are answered with `UNIMPLEMENTED` — the target would
+  otherwise silently skip the periodic re-notification of unchanged values the Subscribe
+  specification promises (the `heartbeat_interval` of an `ON_CHANGE` subscription "MUST be re-sent
+  once per heartbeat interval"), so they are rejected like the other unsupported modes. `qos`,
+  `allow_aggregation` and extensions are ignored (see §6).
 - No schema retrieval: `CapabilityResponse` carries model names and versions only, and there is no
   `Get` of `/`-rooted schema data. The YANG modules are documentation and are not served over the
   wire; use `simulator schema --yang` to print them.
@@ -232,7 +236,7 @@ message in its `desc`.
 | malformed path, composite key, unknown origin, bad value, `unknown-element`, failed validation | `INVALID_ARGUMENT` |
 | write to a read-only (`config:"false"`) leaf, `access-denied` | `PERMISSION_DENIED` |
 | `data-exists` | `ALREADY_EXISTS` |
-| unsupported operation (SAMPLE/POLL/`union_replace`) | `UNIMPLEMENTED` |
+| unsupported operation (SAMPLE/POLL/`heartbeat_interval`/`union_replace`) | `UNIMPLEMENTED` |
 | cancelled or expired context | `CANCELLED` / `DEADLINE_EXCEEDED` |
 | anything else, including a store failure | `INTERNAL` |
 

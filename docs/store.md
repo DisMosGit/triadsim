@@ -99,7 +99,8 @@ Phase 1.6.
 
 Managed objects mark read-only nodes with the `config:"false"` tag (for example `rssi` and
 `fade-margin`). Enforcement lives in `internal/router`, which rejects a write to such a node
-before it reaches the store — the store itself has no schema knowledge.
+before it reaches the store — the store itself has no schema knowledge. The one exception is the
+state filter below, which hands the store the single fact it needs about those leaves.
 
 ## Domain state writes
 
@@ -139,6 +140,19 @@ database — and the document is replaced atomically (temporary file, `fsync`, `
 `fsync`), so a crash or a full disk mid-commit cannot leave a truncated `startup.json` that the
 next boot refuses to load.
 
+**Configuration only.** The persisted document holds configuration leaves exclusively. A state
+leaf (`config:"false"` — uptime, a counter, a MAC entry's `age`) is volatile and would reappear
+stale after a restart, so `Commit` and `Restore` drop it before `Save`, and `LoadStartup` drops
+such leaves from a document written by an older version. The store knows which leaves those are
+through the state filter installed with `SetStateFilter` (the router supplies `IsState`), the
+same hook that keeps the RESTCONF entity-tag still under state churn. The in-memory datastores
+are unaffected: state lives in running and candidate as before.
+
+**Loaded input is validated.** A `startup.json` is untrusted operator input, so `LoadStartup`
+runs the commit validator over the decoded leaves before installing anything and fails with a
+path-level error; a hand-edited or corrupted-but-parseable file cannot put the device into a
+state the validator rejects later. A missing file stays a no-op.
+
 The document is versioned and every leaf carries its Go type, because plain JSON would decode
 every number as `float64` and silently change the type of an `int` or `uint32` leaf across a
 restart:
@@ -158,6 +172,14 @@ restart:
 error. A **missing** file is not an error: it yields an empty map, because the first boot has no
 startup file yet. `(*Memory).LoadStartup` loads the configured file into running, candidate and
 startup and is a no-op when persistence is disabled or the file does not exist.
+
+## Bulk reads and change tracking
+
+Three read-side methods serve the consumers that need more than one leaf (`store.Store`):
+
+- `Values(ctx, ds)` copies a whole datastore in one locked pass. It is the bulk read behind every flattening consumer — the SNMP request index, the data-tree read engine, `Router.Values` — replacing a `List` with one `Get` per path.
+- `Generation(ctx, ds)` counts every mutation of a datastore, state writes included, so a cached derived view (the memoized SNMP object index in `internal/router`) knows when it is stale.
+- `ConfigChangedAt(ctx, ds)` stamps the last configuration change and ignores state writes, because RFC 8040 §3.4.1.1 forbids the RESTCONF `ETag`/`Last-Modified` validators from moving on state churn. The RESTCONF plane derives both validators from it.
 
 ## Status
 

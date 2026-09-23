@@ -260,11 +260,24 @@ GetResponse:
 **Implementation (Phase 1.8, table objects Phase 4).** A `SetRequest` writes the `running`
 datastore (writable-running semantics). The agent resolves every varbind through `internal/router`
 using the model path of the binding it just looked up, so an object of a table that grew at
-runtime is writable as well; it rejects a read-only
-object with `ReadOnly` (`noSuchName`, `wrongType` and `wrongValue` are used for an unknown OID, a
-bad value type and a value the model rejects), then builds the whole proposed running
-configuration, validates it with the router and only then applies the writes. A multi-varbind
-`Set` is therefore all-or-nothing: a value the model rejects leaves the device unchanged.
+runtime is writable as well; it builds the whole proposed running configuration, validates it
+with the router and only then applies the writes. A multi-varbind `Set` is therefore
+all-or-nothing: a value the model rejects leaves the device unchanged.
+
+Failures carry the SNMPv2c error-status vocabulary of RFC 3416 §4.2.5 — the v1 codes
+`noSuchName(2)`, `badValue(3)` and `readOnly(4)` are proxy-compatibility leftovers and are never
+sent — and `error-index` names the failing variable binding (1-based), as §4.2.5 requires. The
+variable bindings are validated in order, so a batch reports the first index whose addition makes
+the configuration fail:
+
+| Failure | error-status | RFC 3416 §4.2.5 case |
+|---|---|---|
+| Unknown object or instance (the agent never creates instances over SNMP) | `noCreation(11)` | (7) |
+| Object exposed but not writable (read-only model leaf, constant object) | `notWritable(17)` | (2), (9) |
+| Value of the wrong ASN.1 type for the object | `wrongType(7)` | (3) |
+| Right type, but a value the object could never hold (out of range, outside the value domain) | `wrongValue(10)` | (6) |
+| A value the model rejects when added to the configuration | `inconsistentValue(12)` | (10) |
+| Internal failure (transaction, snapshot) | `genErr(5)`, `error-index` 0 | (12) |
 
 ---
 

@@ -21,11 +21,14 @@ The implementation lives in `internal/restconf` (routing, media types, HTTP stat
 
 **Implemented**
 
-- `GET`, `HEAD`, `PUT`, `PATCH`, `POST` and `DELETE` on `/restconf/data` — a resource, a list collection, a list entry or the whole datastore. Any other method gets `405 method-not-allowed` with an `Allow` header.
+- `GET`, `HEAD`, `PUT`, `PATCH`, `POST` and `DELETE` on `/restconf/data` and on `/restconf/ds/{datastore}` — a resource, a list collection, a list entry or the whole datastore. Any other method gets `405 method-not-allowed` with an `Allow` header.
+- Per-datastore addressing with RFC 8527 §3.1 identityref resources: `/restconf/ds/ietf-datastores:running`, `/restconf/ds/ietf-datastores:candidate` and `/restconf/ds/sim-device:startup` (§4.5).
 - The two YANG data media types `application/yang-data+json` and `application/yang-data+xml`, for both request bodies and responses, selected by `Content-Type` and `Accept`. JSON is the default.
-- `?datastore=running|candidate|startup`, default `running`. A write is accepted on `running` and `candidate`; `startup` is read-only.
+- `?datastore=running|candidate|startup`, default `running`, as an alias for the `ds` resources on `/restconf/data`. A write is accepted on `running` and `candidate`; `startup` is read-only.
 - `?content=all|config|nonconfig`, default `all`.
+- Caching metadata and conditional requests (RFC 8040 §3.4.1, §3.5.1, §3.5.2, §5.5): `ETag`, `Last-Modified` and `Cache-Control` on retrievals, `If-None-Match`/`If-Modified-Since` answered with `304`, and `If-Match`/`If-Unmodified-Since` enforced on edits with `412` (§5.7).
 - The `ietf-restconf` error document (JSON) with `error-type`, `error-tag`, `error-path` and `error-message`.
+- Percent-encoded `Location` identifiers and request parsing per RFC 8040 §3.5.3: reserved characters in list keys never reach the URI unencoded.
 - `POST /api/simulate/l2-storm`, a simulator-specific endpoint (not part of RFC 8040) that injects a broadcast storm on one L2 port.
 - `POST /api/simulate/sync-loss`, a simulator-specific endpoint (not part of RFC 8040) that loses the PTP clock's synchronization source and drives it into holdover.
 - `POST /api/simulate/radio-failure` and `POST /api/simulate/radio-restore`, simulator-specific endpoints that inject and clear a radio-link failure.
@@ -185,6 +188,7 @@ RESTCONF resource paths follow the YANG data tree hierarchy. The general form is
 Rules the parser (`internal/restconf/path.go`) enforces:
 
 - **List entries** are addressed with `key=value`, e.g. `/restconf/data/sim-l2-switching:vlans/vlan=100`. The key name is declared by the model (here `vlan` is the list name and `id` is the key, so a URL says `vlan=100`). Internally the canonical router path is `vlans/vlan[id=100]`.
+- **Key values are percent-encoded** per RFC 8040 §3.5.3: every reserved character of a key value (`?`, `#`, `%`, space, `,`, `=`, `:`, `;`, `+`, `@`, `/`, …) is escaped in the URI and decoded back after the path is split, so a key never turns into a query string, a fragment or an extra path segment. The server generates such identifiers in `Location` headers and accepts them on input.
 - **A list collection** is addressed without a key predicate, e.g. `/restconf/data/sim-l2-switching:vlans/vlan`. That is the resource `POST` creates in and `DELETE` clears.
 - **A list addressed without its key in the middle of a path** is a `400 malformed-message` (`list … is missing its key predicate`).
 - **A key predicate on a non-list node** is a `400 malformed-message` (`… is not a list`).
@@ -246,6 +250,22 @@ List keys in the model:
 | `…/radio-link/modulation-profile` | `id` |
 | `synce/interfaces/interface` | `name` |
 
+### 4.5. Datastore Resources
+
+RFC 8040's datastore resource is `{+restconf}/data` itself; it defines no per-datastore URIs and no `datastore` query parameter. RFC 8527 (RESTCONF Extensions for the NMDA) adds them as `{+restconf}/ds/<datastore>`, with the datastore encoded as a namespace-qualified identityref, and TriadSim follows that shape:
+
+| Resource | Datastore |
+|---|---|
+| `/restconf/ds/ietf-datastores:running/…` | running |
+| `/restconf/ds/ietf-datastores:candidate/…` | candidate |
+| `/restconf/ds/sim-device:startup/…` | startup |
+
+- `startup` is not an `ietf-datastores` identity (the NMDA has none), so the simulator derives its own `sim-device:startup` identity from `ietf-datastores:datastore`; it is documented in `yang/sim-device.yang` (documentation only).
+- The identityref must be namespace-qualified (RFC 8527 §3.1): `/restconf/ds/candidate/…` is `400 malformed-message`.
+- Everything below the datastore segment is an ordinary data path with the §4.2 rules, and every method of §5 works the same as on `/restconf/data`.
+- The `?datastore=` parameter of §6 is an alias kept for existing clients. Using both selectors at once is ambiguous and rejected with `400 malformed-message`.
+- A `Location` header of a resource created under `/restconf/ds/<datastore>` stays under that addressing root, so a client that edits the candidate keeps navigating the candidate.
+
 ---
 
 ## 5. HTTP Methods
@@ -288,6 +308,8 @@ The response root is the addressed node (§3.4). Missing data is a `404 data-mis
 - `nonconfig` — state leaves only.
 
 With `content=config`, a state leaf is not part of the resource at all: addressing it directly returns `404`.
+
+Every retrieval also carries the caching metadata of RFC 8040 §3.5.1/§3.5.2: a strong `ETag` and a `Last-Modified` header (omitted while no configuration change has been recorded), plus `Cache-Control: no-cache` as §5.5 requires of every response. Both validators move only when configuration data changes — never for a state write (§3.4.1.2 of the RFC) — and the entity-tag is per representation, so the JSON and XML forms of a resource carry different tags. Conditional requests are honoured (§5.7).
 
 **Example — retrieve system info:**
 
@@ -342,11 +364,11 @@ Deletes the target resource and answers `204 No Content`.
 
 ### 5.6. Writes, Datastores and Commit
 
-Every write goes to the datastore selected by `?datastore=`, default `running`:
+Every write goes to the datastore the request addresses — the `?datastore=` parameter or the `/restconf/ds/<datastore>` path (§4.5) — default `running`:
 
-- `?datastore=running` (or no parameter) writes the active datastore.
-- `?datastore=candidate` writes the work-in-progress datastore. The seeded device lives in `running` and `candidate`; the test suite writes candidate and confirms `running` is untouched.
-- `?datastore=startup` is read-only for every method: it answers `405` with `Allow: GET, HEAD`.
+- Running (default or explicit) writes the active datastore.
+- Candidate writes the work-in-progress datastore. The seeded device lives in `running` and `candidate`; the test suite writes candidate and confirms `running` is untouched.
+- Startup is read-only for every method: it answers `405` with `Allow: GET, HEAD`.
 
 RESTCONF writes are not committed by the request itself. The store's `Commit` is
 candidate-authoritative: it validates `candidate`, makes `running` a copy of it and persists
@@ -360,6 +382,23 @@ candidate-authoritative: it validates `candidate`, makes `running` a copy of it 
 - A running-targeted write also updates the paths it addresses in `candidate`, so it can overwrite
   a pending candidate edit for the same path (last writer wins).
 - A successful write publishes a `ConfigChanged` event on the shared bus; the request itself never commits.
+
+### 5.7. Conditional Requests
+
+The entity-tag and timestamp of §5.1 support optimistic concurrency and cache validation (RFC 7232, as prescribed by RFC 8040 §3.4.1):
+
+- **Edits (`PUT`, `PATCH`, `POST`, `DELETE`)** carry `If-Match` (an entity-tag list, or `*`) or `If-Unmodified-Since`. A stale condition is answered `412 Precondition Failed` with the current `ETag`/`Last-Modified`, and the datastore is left untouched. `If-Match` wins over `If-Unmodified-Since` when both are present; since an edit does not declare a representation, an `If-Match` tag is matched against either representation's entity-tag.
+- **Retrievals (`GET`, `HEAD`)** carry `If-None-Match` or `If-Modified-Since`. An unchanged condition is answered `304 Not Modified` with the current validators and no body. `If-None-Match` wins over `If-Modified-Since`.
+- HTTP dates have second granularity (RFC 7232 §2.2), so `If-Unmodified-Since`/`If-Modified-Since` compare at whole seconds.
+
+```http
+GET /restconf/data/sim-device:system-info/name HTTP/1.1
+If-None-Match: "d41d8cd98f00b204"
+
+HTTP/1.1 304 Not Modified
+ETag: "d41d8cd98f00b204"
+Cache-Control: no-cache
+```
 
 ---
 
@@ -375,6 +414,7 @@ RFC 8040 defines several query parameters. TriadSim reads exactly two of them (`
 Notes:
 
 - `content` is spelled **`nonconfig`**, without a hyphen (the value of `datatree.ContentNonConfig`).
+- `datastore` is **not** an RFC 8040 parameter (RFC 8040 §5.1 does allow a server to support its own query parameters). It is kept as an alias of the standard-shaped `/restconf/ds/<datastore>` resources of §4.5; new clients should prefer those. It cannot be combined with a `/restconf/ds/` path (`400`).
 - An unknown value for either parameter is `400 malformed-message` (`unknown datastore "…"` / `unknown content "…"`).
 - The RFC 8040 parameters `depth`, `fields`, `filter`, `with-defaults` and `replay` are **not implemented**. They are neither validated nor acted on: an unknown query parameter is ignored and the full resource is returned. The capability URNs below are consequently not advertised.
 
@@ -435,7 +475,7 @@ The following table is the exact mapping in `internal/restconf/errors.go`:
 
 | HTTP status | `error-type` | `error-tag` | Condition |
 |---|---|---|---|
-| `400 Bad Request` | `protocol` | `malformed-message` | Malformed or empty body reported by the server's own reader; unknown `?datastore=`/`?content=` value; missing key predicate, key on a non-list, or a module prefix that does not own the node |
+| `400 Bad Request` | `protocol` | `malformed-message` | Malformed or empty body reported by the server's own reader; unknown `?datastore=`/`?content=` value or unknown `/restconf/ds/` identityref; `?datastore=` combined with a `/restconf/ds/` path; malformed percent-encoding in a path segment; missing key predicate, key on a non-list, or a module prefix that does not own the node |
 | `400 Bad Request` | `rpc` | `malformed-message` | Empty or unparsable JSON/XML body reported by the codec |
 | `400 Bad Request` | `protocol` | `unknown-element` | Path or body names a node that is not in the model |
 | `400 Bad Request` | `protocol` | `missing-element` | A required element (for example a list key) is absent from the body |
@@ -446,11 +486,14 @@ The following table is the exact mapping in `internal/restconf/errors.go`:
 | `405 Method Not Allowed` | `protocol` | `operation-not-supported` | Method is not allowed for the target; `Allow` header is set |
 | `406 Not Acceptable` | `protocol` | `operation-not-supported` | `Accept` is not a YANG data media type |
 | `409 Conflict` | `protocol` | `data-exists` | Creating an entry that already exists |
+| `412 Precondition Failed` | `protocol` | `operation-failed` | An edit carries a stale `If-Match` entity-tag or `If-Unmodified-Since` timestamp (§5.7); the response carries the current `ETag`/`Last-Modified` |
 | `413 Request Entity Too Large` | `protocol` | `too-big` | The request body exceeded the 1 MiB cap (`maxBodyBytes = 1 << 20`), or a data-tree operation reports a size limit |
 | `415 Unsupported Media Type` | `protocol` | `operation-not-supported` | `Content-Type` is not a YANG data media type |
 | `422 Unprocessable Entity` | `protocol` | `invalid-value` | The proposed datastore snapshot fails model validation |
 | `500 Internal Server Error` | `application` | `operation-failed` | Store or router failure; also the default for an unclassified error |
 | `501 Not Implemented` | `protocol` | `operation-not-supported` | `/restconf/operations`, `/restconf/streams`, the storm endpoint without a simulator, or any other unimplemented operation |
+
+A `304 Not Modified` (a retrieval whose `If-None-Match`/`If-Modified-Since` says the client's copy is current, §5.7) carries no error document: only the current `ETag`/`Last-Modified` and `Cache-Control` headers.
 
 **Note on the body limit.** Both the data-resource reader and the storm endpoint wrap the body in `http.MaxBytesReader(w, r.Body, 1<<20)` (1 MiB). A body above the limit fails while it is being read and is answered with `413 too-big` (`request body exceeds the 1048576 byte limit`); a different read failure is `400 malformed-message`.
 
@@ -561,12 +604,15 @@ Routes:
 | Route | Handler |
 |---|---|
 | `/restconf/data`, `/restconf/data/*` | Data resource (GET/HEAD/PUT/PATCH/POST/DELETE) |
+| `/restconf/ds/{datastore}`, `/restconf/ds/{datastore}/*` | RFC 8527 datastore resource; same handler, datastore resolved from the identityref |
 | `/restconf/operations`, `/restconf/operations/*` | `501 operation-not-supported` |
 | `/restconf/streams`, `/restconf/streams/*` | `501 operation-not-supported` |
 | `/api/simulate/l2-storm` | Simulation endpoint (`POST`) |
 | `/api/simulate/sync-loss` | Simulation endpoint (`POST`) |
 | `/api/simulate/radio-failure` | Simulation endpoint (`POST`) |
 | `/api/simulate/radio-restore` | Simulation endpoint (`POST`) |
+
+Every response passes a `Cache-Control: no-cache` middleware (RFC 8040 §5.5).
 
 The server is stateless at the HTTP layer; state resides in the `internal/store` package (running/candidate/startup datastores).
 
@@ -581,7 +627,9 @@ The shared `internal/datatree` engine gives every write the same shape: the edit
 
 ### 9.3. Datastore Integration
 
-RESTCONF operations target the running datastore by default. The candidate and startup datastores are addressed with `?datastore=candidate` and `?datastore=startup` (a TriadSim extension for demonstration purposes; standard RESTCONF does not define a datastore query parameter). Writes are accepted on running and candidate, and rejected on startup. See §5.6 for the commit relationship with NETCONF.
+RESTCONF operations target the running datastore by default. The candidate and startup datastores are addressed either with the standard-shaped RFC 8527 resources `/restconf/ds/ietf-datastores:candidate` and `/restconf/ds/sim-device:startup` (§4.5) or with the `?datastore=candidate` / `?datastore=startup` query alias (§6), which TriadSim keeps for existing clients; RFC 8040 itself defines neither form, its datastore resource being `{+restconf}/data`. Writes are accepted on running and candidate, and rejected on startup. See §5.6 for the commit relationship with NETCONF and §5.7 for the conditional-request validators.
+
+The entity-tag and last-modification time come from the store's change tracking (`Generation`/`ConfigChangedAt` in `internal/store`): any write advances the generation (which invalidates cached derived views such as the SNMP object index), while `ConfigChangedAt` moves only when a non-state path changes, which is what keeps the validators still under state churn (RFC 8040 §3.4.1.2).
 
 ### 9.4. Content Negotiation
 

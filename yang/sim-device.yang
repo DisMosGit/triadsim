@@ -20,6 +20,13 @@ module sim-device {
       "The radio link of a radio interface.";
   }
 
+  import ietf-datastores {
+    prefix ds;
+    description
+      "The base identity of the datastore identityrefs the RESTCONF
+       {+restconf}/ds/ addressing uses (RFC 8527).";
+  }
+
   organization
     "TriadSim";
   contact
@@ -30,6 +37,16 @@ module sim-device {
   revision 2026-09-22 {
     description
       "Initial revision, matching the Go model of the simulator.";
+  }
+
+  identity startup {
+    base ds:datastore;
+    description
+      "The TriadSim startup datastore. RFC 8527 addresses datastores as
+       namespace-qualified identityrefs below {+restconf}/ds/; running and
+       candidate are ietf-datastores identities, while startup — a non-NMDA
+       datastore — is declared here so RESTCONF exposes it as
+       sim-device:startup.";
   }
 
   container system-info {
