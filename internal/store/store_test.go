@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,8 +16,15 @@ import (
 type stub struct{}
 
 func (stub) Get(context.Context, Datastore, string) (any, error) { return nil, ErrNotFound }
-func (stub) Set(context.Context, Datastore, string, any) error   { return nil }
-func (stub) Delete(context.Context, Datastore, string) error     { return ErrNotFound }
+func (stub) Values(context.Context, Datastore) (map[string]any, error) {
+	return nil, nil
+}
+func (stub) Generation(context.Context, Datastore) (uint64, error) { return 0, nil }
+func (stub) ConfigChangedAt(context.Context, Datastore) (time.Time, error) {
+	return time.Time{}, nil
+}
+func (stub) Set(context.Context, Datastore, string, any) error { return nil }
+func (stub) Delete(context.Context, Datastore, string) error   { return ErrNotFound }
 func (stub) Apply(context.Context, Datastore, map[string]any, []string) error {
 	return nil
 }

@@ -12,6 +12,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Datastore names one of the three configuration datastores.
@@ -90,9 +91,26 @@ type Change struct {
 // Read-only enforcement (nodes tagged config:"false") belongs to
 // internal/router, not to the store. Implementations must be safe for
 // concurrent use and must respect ctx cancellation.
+//
+// One small hook hands the store the bit of schema knowledge it does need:
+// a state filter marking the paths of leaves tagged config:"false". Those
+// leaves are excluded from the persisted startup document and do not count
+// as configuration changes for ConfigChangedAt.
 type Store interface {
 	// Get returns the value at path in ds, or ErrNotFound.
 	Get(ctx context.Context, ds Datastore, path string) (any, error)
+	// Values returns a detached copy of every leaf of ds in one pass, keyed
+	// by canonical path. It is the bulk read every flattening consumer uses
+	// instead of a List followed by one Get per path.
+	Values(ctx context.Context, ds Datastore) (map[string]any, error)
+	// Generation returns a counter that changes whenever any leaf of ds
+	// changes, state leaves included, so a cached derived view — the SNMP
+	// OID index — can tell whether it is stale.
+	Generation(ctx context.Context, ds Datastore) (uint64, error)
+	// ConfigChangedAt returns the time of the last change to configuration
+	// data in ds. State-only writes do not move it (RFC 8040 §3.4.1.1). The
+	// zero time means no configuration change has been recorded yet.
+	ConfigChangedAt(ctx context.Context, ds Datastore) (time.Time, error)
 	// Set stores value at path in ds, creating the path when necessary. A
 	// write to Running is mirrored into Candidate.
 	Set(ctx context.Context, ds Datastore, path string, value any) error

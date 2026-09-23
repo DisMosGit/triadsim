@@ -6,6 +6,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/DisMosGit/triadsim/internal/clock"
 )
 
 // Validator checks a candidate snapshot before Commit applies it to running.
@@ -29,6 +32,16 @@ type Options struct {
 	// Validator, when non-nil, checks the candidate before Commit applies it.
 	// A nil Validator accepts every candidate.
 	Validator Validator
+
+	// StateFilter reports whether a path holds state data (a leaf tagged
+	// config:"false"). Those leaves are excluded from the persisted startup
+	// document and never move ConfigChangedAt. A nil filter treats every leaf
+	// as configuration.
+	StateFilter func(path string) bool
+
+	// Clock is the time source for ConfigChangedAt. A nil Clock is
+	// clock.RealClock.
+	Clock clock.Clock
 }
 
 // Memory is the in-memory Store implementation. It is safe for concurrent
@@ -40,24 +53,36 @@ type Options struct {
 // the pending edits. Commit relies on that invariant when it makes running a
 // copy of candidate.
 type Memory struct {
-	mu          sync.RWMutex
-	running     map[string]any
-	candidate   map[string]any
-	startup     map[string]any
-	startupFile string
-	validator   Validator
+	mu            sync.RWMutex
+	running       map[string]any
+	candidate     map[string]any
+	startup       map[string]any
+	startupFile   string
+	validator     Validator
+	stateFilter   func(path string) bool
+	clock         clock.Clock
+	generation    map[Datastore]uint64
+	configChanged map[Datastore]time.Time
 }
 
 // NewMemory returns an empty store whose three datastores are equal. The
 // datastores are populated through Set, or from a persisted startup file with
 // LoadStartup.
 func NewMemory(opts Options) *Memory {
+	timeSource := opts.Clock
+	if timeSource == nil {
+		timeSource = clock.RealClock{}
+	}
 	return &Memory{
-		running:     make(map[string]any),
-		candidate:   make(map[string]any),
-		startup:     make(map[string]any),
-		startupFile: opts.StartupFile,
-		validator:   opts.Validator,
+		running:       make(map[string]any),
+		candidate:     make(map[string]any),
+		startup:       make(map[string]any),
+		startupFile:   opts.StartupFile,
+		validator:     opts.Validator,
+		stateFilter:   opts.StateFilter,
+		clock:         timeSource,
+		generation:    make(map[Datastore]uint64, 3),
+		configChanged: make(map[Datastore]time.Time, 3),
 	}
 }
 
@@ -81,6 +106,71 @@ func (m *Memory) SetValidator(v Validator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.validator = v
+}
+
+// SetStateFilter installs the filter that marks state leaves
+// (config:"false"). It exists so the router, which knows the schema, can be
+// wired in after the store is constructed. Call it before the first Commit.
+func (m *Memory) SetStateFilter(f func(path string) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stateFilter = f
+}
+
+// isState reports whether path holds state data. The caller must hold m.mu.
+func (m *Memory) isState(path string) bool {
+	return m.stateFilter != nil && m.stateFilter(path)
+}
+
+// configOnly returns values without the state leaves, which is what the
+// persisted startup document holds: startup is a configuration datastore, and
+// a volatile leaf (uptime, a counter, a MAC entry's age) must not reappear
+// stale after a restart. The caller must hold m.mu.
+func (m *Memory) configOnly(values map[string]any) map[string]any {
+	if m.stateFilter == nil {
+		return copyValues(values)
+	}
+	out := make(map[string]any, len(values))
+	for p, v := range values {
+		if m.isState(p) {
+			continue
+		}
+		out[p] = v
+	}
+	return out
+}
+
+// recordWriteLocked advances the change tracking after paths were written or
+// removed in ds. A mutation of Running is mirrored into Candidate, so both
+// datastores change. Generation always moves; ConfigChangedAt moves only when
+// a configuration leaf is involved. The caller must hold m.mu.
+func (m *Memory) recordWriteLocked(ds Datastore, paths ...string) {
+	m.bumpLocked(ds, paths...)
+	if ds == Running {
+		m.bumpLocked(Candidate, paths...)
+	}
+}
+
+// bumpLocked advances the change tracking of one datastore. The caller must
+// hold m.mu.
+func (m *Memory) bumpLocked(ds Datastore, paths ...string) {
+	m.generation[ds]++
+	for _, path := range paths {
+		if !m.isState(path) {
+			m.configChanged[ds] = m.clock.Now()
+			return
+		}
+	}
+}
+
+// recordDiffLocked advances the change tracking of ds after a wholesale
+// replacement whose effective changes are diff. The caller must hold m.mu.
+func (m *Memory) recordDiffLocked(ds Datastore, diff []Change) {
+	paths := make([]string, 0, len(diff))
+	for _, change := range diff {
+		paths = append(paths, change.Path)
+	}
+	m.bumpLocked(ds, paths...)
 }
 
 // validPath reports whether path is in canonical form: non-empty, no leading
@@ -173,6 +263,7 @@ func (m *Memory) Set(ctx context.Context, ds Datastore, path string, value any) 
 	}
 	values[path] = value
 	m.mirror(ds, path, value, false)
+	m.recordWriteLocked(ds, path)
 	return nil
 }
 
@@ -196,6 +287,7 @@ func (m *Memory) Delete(ctx context.Context, ds Datastore, path string) error {
 	}
 	delete(values, path)
 	m.mirror(ds, path, nil, true)
+	m.recordWriteLocked(ds, path)
 	return nil
 }
 
@@ -237,6 +329,13 @@ func (m *Memory) Apply(ctx context.Context, ds Datastore, values map[string]any,
 		delete(target, path)
 		m.mirror(ds, path, nil, true)
 	}
+
+	written := make([]string, 0, len(values)+len(deletions))
+	for path := range values {
+		written = append(written, path)
+	}
+	written = append(written, deletions...)
+	m.recordWriteLocked(ds, written...)
 	return nil
 }
 
@@ -289,7 +388,9 @@ func (m *Memory) Diff(ctx context.Context) ([]Change, error) {
 // every write to running is mirrored into candidate, this cannot revert
 // configuration that a plane wrote without using candidate. The startup file
 // is written before running is swapped, so a failed write or a rejected
-// candidate leaves every datastore untouched.
+// candidate leaves every datastore untouched. Only configuration leaves are
+// persisted: state leaves (config:"false") are volatile and must not reappear
+// stale after a restart.
 func (m *Memory) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -305,8 +406,9 @@ func (m *Memory) Commit(ctx context.Context) error {
 	}
 
 	next := copyValues(m.candidate)
+	diff := diffValues(m.running, next)
 	if m.startupFile != "" {
-		if err := Save(ctx, m.startupFile, next); err != nil {
+		if err := Save(ctx, m.startupFile, m.configOnly(next)); err != nil {
 			return fmt.Errorf("store: commit: %w", err)
 		}
 	}
@@ -314,6 +416,9 @@ func (m *Memory) Commit(ctx context.Context) error {
 	m.running = next
 	m.startup = copyValues(next)
 	m.candidate = copyValues(next)
+	for _, ds := range []Datastore{Running, Candidate, Startup} {
+		m.recordDiffLocked(ds, diff)
+	}
 	return nil
 }
 
@@ -327,7 +432,9 @@ func (m *Memory) Rollback(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	diff := diffValues(m.candidate, m.running)
 	m.candidate = copyValues(m.running)
+	m.recordDiffLocked(Candidate, diff)
 	return nil
 }
 
@@ -349,7 +456,8 @@ func (m *Memory) Snapshot(ctx context.Context) (map[string]any, error) {
 //
 // The startup file is written before running is swapped, so a failed write
 // leaves every datastore untouched. A snapshot of running is by definition a
-// valid configuration, so no validation is performed.
+// valid configuration, so no validation is performed. Only configuration
+// leaves are persisted, like in Commit.
 func (m *Memory) Restore(ctx context.Context, values map[string]any) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -359,20 +467,30 @@ func (m *Memory) Restore(ctx context.Context, values map[string]any) error {
 	defer m.mu.Unlock()
 
 	next := copyValues(values)
+	diff := diffValues(m.running, next)
 	if m.startupFile != "" {
-		if err := Save(ctx, m.startupFile, next); err != nil {
+		if err := Save(ctx, m.startupFile, m.configOnly(next)); err != nil {
 			return fmt.Errorf("store: restore: %w", err)
 		}
 	}
 
 	m.running = next
 	m.startup = copyValues(next)
+	m.recordDiffLocked(Running, diff)
+	m.recordDiffLocked(Startup, diff)
 	return nil
 }
 
 // LoadStartup loads the persisted startup datastore into running, candidate
 // and startup. It is a no-op when persistence is disabled or the file does not
 // exist yet, so it can be called unconditionally at boot.
+//
+// The loaded leaves are untrusted operator input: state leaves a document
+// written by an older version still carries are dropped (they are volatile and
+// would reappear stale), and the Validator runs on the result before anything
+// is installed, so a hand-edited or corrupted-but-parseable file is rejected
+// with a path-level error at the boundary instead of failing later, in the
+// middle of domain setup.
 func (m *Memory) LoadStartup(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -386,11 +504,82 @@ func (m *Memory) LoadStartup(ctx context.Context) error {
 		return fmt.Errorf("store: load startup: %w", err)
 	}
 
+	// The hooks are installed once, before the first LoadStartup; read them
+	// without holding the lock across their calls.
+	m.mu.RLock()
+	filter, validator := m.stateFilter, m.validator
+	m.mu.RUnlock()
+
+	if filter != nil {
+		for path := range values {
+			if filter(path) {
+				delete(values, path)
+			}
+		}
+	}
+	if validator != nil {
+		if err := validator(ctx, values); err != nil {
+			return fmt.Errorf("store: load startup: invalid startup file: %w", err)
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	diff := diffValues(m.running, values)
 	m.running = copyValues(values)
 	m.startup = copyValues(values)
 	m.candidate = copyValues(values)
+	for _, ds := range []Datastore{Running, Candidate, Startup} {
+		m.recordDiffLocked(ds, diff)
+	}
 	return nil
+}
+
+// Values returns a detached copy of every leaf of ds in one pass.
+func (m *Memory) Values(ctx context.Context, ds Datastore) (map[string]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	values, err := m.datastore(ds)
+	if err != nil {
+		return nil, err
+	}
+	return copyValues(values), nil
+}
+
+// Generation returns ds's change counter.
+func (m *Memory) Generation(ctx context.Context, ds Datastore) (uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, err := m.datastore(ds); err != nil {
+		return 0, err
+	}
+	return m.generation[ds], nil
+}
+
+// ConfigChangedAt returns the time of ds's last configuration change. State
+// writes do not move it; the zero time means no configuration change has been
+// recorded yet.
+func (m *Memory) ConfigChangedAt(ctx context.Context, ds Datastore) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, err := m.datastore(ds); err != nil {
+		return time.Time{}, err
+	}
+	return m.configChanged[ds], nil
 }
