@@ -22,6 +22,7 @@ func seedRouter(t *testing.T) (*router.Router, *store.Memory) {
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 	require.NoError(t, r.Seed(t.Context(), store.Running))
 	require.NoError(t, st.Rollback(t.Context()))
 	return r, st

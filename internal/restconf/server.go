@@ -170,6 +170,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Route("/restconf", func(mux chi.Router) {
 		mux.HandleFunc("/data", s.handleData)
 		mux.HandleFunc("/data/*", s.handleData)
+		// RFC 8527 §3.1 datastore resources: the datastore is carried in the
+		// path as a namespace-qualified identityref.
+		mux.HandleFunc("/ds/{datastore}", s.handleData)
+		mux.HandleFunc("/ds/{datastore}/*", s.handleData)
 		mux.HandleFunc("/operations", s.handleNotImplemented)
 		mux.HandleFunc("/operations/*", s.handleNotImplemented)
 		mux.HandleFunc("/streams", s.handleNotImplemented)
@@ -180,7 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/simulate/radio-failure", s.handleRadioFailure)
 	mux.HandleFunc("/api/simulate/radio-restore", s.handleRadioRestore)
 
-	return mux
+	return withCacheControl(mux)
 }
 
 // deps builds the operation dependencies of the server.
@@ -227,6 +231,18 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, target *targe
 		return
 	}
 
+	etag, changed, err := s.validators(r.Context(), target.Datastore, format)
+	if err != nil {
+		s.writeError(w, r, internalError(err))
+		return
+	}
+	setValidators(w, etag, changed)
+
+	if notModified(r, etag, changed) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	body, opErr := ops.Encode(format, node)
 	if opErr != nil {
 		s.writeTreeError(w, r, opErr)
@@ -246,6 +262,10 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, target *tar
 		s.writeError(w, r, httpErr)
 		return
 	}
+	if httpErr := s.checkPreconditions(w, r, target.Datastore); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
 
 	payload, httpErr := s.decodeBody(w, r)
 	if httpErr != nil {
@@ -261,7 +281,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, target *tar
 			return
 		}
 		if created {
-			w.Header().Set("Location", locationFor(target.Path))
+			w.Header().Set("Location", locationFor(target.Base, target.Path))
 			w.WriteHeader(http.StatusCreated)
 			return
 		}
@@ -280,7 +300,7 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, target *tar
 			s.writeTreeError(w, r, opErr)
 			return
 		}
-		w.Header().Set("Location", locationFor(created))
+		w.Header().Set("Location", locationFor(target.Base, created))
 		w.WriteHeader(http.StatusCreated)
 	}
 }
@@ -288,6 +308,10 @@ func (s *Server) handleWrite(w http.ResponseWriter, r *http.Request, target *tar
 // handleDelete answers DELETE.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, target *target) {
 	if httpErr := checkWritable(target, http.MethodDelete); httpErr != nil {
+		s.writeError(w, r, httpErr)
+		return
+	}
+	if httpErr := s.checkPreconditions(w, r, target.Datastore); httpErr != nil {
 		s.writeError(w, r, httpErr)
 		return
 	}

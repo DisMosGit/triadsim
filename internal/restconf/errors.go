@@ -78,6 +78,12 @@ func tooLarge(format string, args ...any) *httpError {
 	return newHTTPError(http.StatusRequestEntityTooLarge, errorTypeProtocol, "too-big", format, args...)
 }
 
+// preconditionFailed is the RFC 7232 §4.2 response to a stale conditional
+// edit (RFC 8040 §3.4.1).
+func preconditionFailed(format string, args ...any) *httpError {
+	return newHTTPError(http.StatusPreconditionFailed, errorTypeProtocol, "operation-failed", format, args...)
+}
+
 func notImplemented(operation string) *httpError {
 	return newHTTPError(http.StatusNotImplemented, errorTypeProtocol, "operation-not-supported",
 		"%s is not implemented", operation)

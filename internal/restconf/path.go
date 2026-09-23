@@ -1,7 +1,9 @@
 package restconf
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/DisMosGit/triadsim/internal/datatree"
@@ -17,9 +19,22 @@ const (
 	contentState  = datatree.ContentNonConfig
 )
 
+// Datastore identityrefs accepted in a /restconf/ds/ segment. RFC 8527 §3.1
+// encodes the datastore as a namespace-qualified identity derived from
+// ietf-datastores:datastore; startup is not an NMDA datastore, so the
+// simulator derives its own identity in the sim-device module.
+const (
+	identityRunning   = "ietf-datastores:running"
+	identityCandidate = "ietf-datastores:candidate"
+	identityStartup   = "sim-device:startup"
+)
+
 // target is one parsed RESTCONF request target: the resource path resolved
 // against the router schema plus the datastore and content selection.
 type target struct {
+	// Base is the addressing root of the request, what a Location header is
+	// built under: {+restconf}/data or {+restconf}/ds/<identityref>.
+	Base string
 	// Path is the canonical router path of the addressed node. For a list
 	// collection it names the list node without a key.
 	Path string
@@ -44,14 +59,12 @@ type target struct {
 
 // parseTarget resolves r's URL against the router schema. A malformed path or
 // an unknown node is reported as one of the RESTCONF error responses.
+//
+// The request path is read in its escaped form and split before percent-
+// decoding (RFC 8040 §3.5.3), so an encoded "/" or "=" inside a list key
+// stays part of the key instead of corrupting the segment structure.
 func (s *Server) parseTarget(r *http.Request) (*target, *httpError) {
-	prefix := BasePath + "/data"
-	raw := strings.TrimPrefix(r.URL.Path, prefix)
-	if raw == r.URL.Path {
-		return nil, notFound(r.URL.Path)
-	}
-
-	datastore, httpErr := parseDatastore(r.URL.Query().Get("datastore"))
+	base, raw, datastore, httpErr := resolveAddressing(r)
 	if httpErr != nil {
 		return nil, httpErr
 	}
@@ -60,7 +73,7 @@ func (s *Server) parseTarget(r *http.Request) (*target, *httpError) {
 		return nil, httpErr
 	}
 
-	target := &target{Datastore: datastore, Content: selected}
+	target := &target{Base: base, Datastore: datastore, Content: selected}
 
 	raw = strings.Trim(raw, "/")
 	if raw == "" {
@@ -70,7 +83,10 @@ func (s *Server) parseTarget(r *http.Request) (*target, *httpError) {
 	parent := ""
 	parts := strings.Split(raw, "/")
 	for i, part := range parts {
-		module, name, value := splitSegment(part)
+		module, name, value, httpErr := splitSegment(part)
+		if httpErr != nil {
+			return nil, httpErr
+		}
 		if name == "" {
 			return nil, malformedRequest("empty node name in %q", part)
 		}
@@ -120,20 +136,82 @@ func (s *Server) parseTarget(r *http.Request) (*target, *httpError) {
 	return target, nil
 }
 
-// splitSegment splits one URL path segment into its optional module prefix and
-// its optional RESTCONF list key, as in sim-l2-switching:vlan=100.
-func splitSegment(part string) (module, name, value string) {
-	name = part
-	if index := strings.IndexByte(part, '='); index >= 0 {
-		name, value = part[:index], part[index+1:]
+// resolveAddressing returns the addressing root of the request (what a
+// Location header is built under), the still-escaped data path and the
+// addressed datastore.
+//
+// Two addressings are accepted. {+restconf}/data is the RFC 8040 datastore
+// resource; the datastore is selected with the ?datastore= alias (default
+// running). {+restconf}/ds/<identityref> carries the datastore in the path as
+// an RFC 8527 §3.1 identityref. Mixing the two is ambiguous and rejected.
+func resolveAddressing(r *http.Request) (base, raw string, ds store.Datastore, httpErr *httpError) {
+	path := r.URL.EscapedPath()
+	query := r.URL.Query().Get("datastore")
+
+	switch {
+	case strings.HasPrefix(path, BasePath+"/data"):
+		rest := strings.TrimPrefix(path, BasePath+"/data")
+		if rest != "" && !strings.HasPrefix(rest, "/") {
+			return "", "", "", notFound(path)
+		}
+		datastore, httpErr := parseDatastore(query)
+		if httpErr != nil {
+			return "", "", "", httpErr
+		}
+		return BasePath + "/data", rest, datastore, nil
+
+	case strings.HasPrefix(path, BasePath+"/ds/"):
+		if query != "" {
+			return "", "", "", malformedRequest(
+				"?datastore= and /restconf/ds/ address the same thing; use one")
+		}
+		rest := strings.TrimPrefix(path, BasePath+"/ds/")
+		identity := rest
+		if index := strings.IndexByte(rest, '/'); index >= 0 {
+			identity, raw = rest[:index], rest[index:]
+		}
+		datastore, httpErr := parseDatastoreIdentity(identity)
+		if httpErr != nil {
+			return "", "", "", httpErr
+		}
+		return BasePath + "/ds/" + identity, raw, datastore, nil
+
+	default:
+		return "", "", "", notFound(path)
 	}
-	if index := strings.IndexByte(name, ':'); index >= 0 {
-		module, name = name[:index], name[index+1:]
-	}
-	return module, name, value
 }
 
-// parseDatastore maps the ?datastore= parameter to a datastore.
+// splitSegment splits one (still percent-encoded) URL path segment into its
+// optional module prefix, its node name and its optional RESTCONF list key,
+// as in sim-l2-switching:vlan=100. The split happens before percent-decoding,
+// so a key value may itself contain encoded "=" or "/" (RFC 8040 §3.5.3).
+func splitSegment(part string) (module, name, value string, httpErr *httpError) {
+	rawName := part
+	rawValue := ""
+	if index := strings.IndexByte(part, '='); index >= 0 {
+		rawName, rawValue = part[:index], part[index+1:]
+	}
+	rawModule := ""
+	if index := strings.IndexByte(rawName, ':'); index >= 0 {
+		rawModule, rawName = rawName[:index], rawName[index+1:]
+	}
+
+	module, err := url.PathUnescape(rawModule)
+	if err != nil {
+		return "", "", "", malformedRequest("malformed percent-encoding in %q", part)
+	}
+	name, err = url.PathUnescape(rawName)
+	if err != nil {
+		return "", "", "", malformedRequest("malformed percent-encoding in %q", part)
+	}
+	value, err = url.PathUnescape(rawValue)
+	if err != nil {
+		return "", "", "", malformedRequest("malformed percent-encoding in %q", part)
+	}
+	return module, name, value, nil
+}
+
+// parseDatastore maps the ?datastore= alias to a datastore.
 func parseDatastore(value string) (store.Datastore, *httpError) {
 	switch value {
 	case "", string(store.Running):
@@ -141,6 +219,22 @@ func parseDatastore(value string) (store.Datastore, *httpError) {
 	case string(store.Candidate):
 		return store.Candidate, nil
 	case string(store.Startup):
+		return store.Startup, nil
+	default:
+		return "", malformedRequest("unknown datastore %q", value)
+	}
+}
+
+// parseDatastoreIdentity maps the namespace-qualified identityref of a
+// /restconf/ds/ segment to a datastore (RFC 8527 §3.1). Unlike the
+// ?datastore= alias, only the qualified form is accepted.
+func parseDatastoreIdentity(value string) (store.Datastore, *httpError) {
+	switch value {
+	case identityRunning:
+		return store.Running, nil
+	case identityCandidate:
+		return store.Candidate, nil
+	case identityStartup:
 		return store.Startup, nil
 	default:
 		return "", malformedRequest("unknown datastore %q", value)
@@ -162,16 +256,17 @@ func parseContent(value string) (datatree.Content, *httpError) {
 }
 
 // locationFor converts a canonical router path into the RESTCONF URL of a
-// resource: the top node is module-qualified and list keys are rendered as
-// =value instead of the [key=value] predicate.
-func locationFor(path string) string {
+// resource under base: the top node is module-qualified and list keys are
+// rendered as =value instead of the [key=value] predicate, with the key value
+// percent-encoded (RFC 8040 §3.5.3).
+func locationFor(base, path string) string {
 	parsed, err := router.Parse(path)
 	if err != nil {
-		return BasePath + "/data"
+		return base
 	}
 
 	var builder strings.Builder
-	builder.WriteString(BasePath + "/data/")
+	builder.WriteString(base + "/")
 	for i, segment := range parsed.Segments {
 		if i > 0 {
 			builder.WriteByte('/')
@@ -183,7 +278,26 @@ func locationFor(path string) string {
 		builder.WriteString(segment.Name)
 		if segment.Key != "" {
 			builder.WriteByte('=')
-			builder.WriteString(segment.Value)
+			builder.WriteString(escapeKey(segment.Value))
+		}
+	}
+	return builder.String()
+}
+
+// escapeKey percent-encodes one list key value for a RESTCONF resource
+// identifier (RFC 8040 §3.5.3): every reserved character — the comma above
+// all — is percent-encoded. Only the RFC 3986 unreserved set stays literal,
+// which is stricter than url.PathEscape (it leaves "= : ; + @" alone).
+func escapeKey(value string) string {
+	var builder strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '-', c == '.', c == '_', c == '~':
+			builder.WriteByte(c)
+		default:
+			fmt.Fprintf(&builder, "%%%02X", c)
 		}
 	}
 	return builder.String()
