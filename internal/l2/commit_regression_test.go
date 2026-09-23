@@ -76,3 +76,32 @@ func TestRunningCreatedMACEntrySurvivesACommit(t *testing.T) {
 	_, err = manager.MACEntry(ctx, mac)
 	assert.ErrorIs(t, err, ErrMACNotFound, "a deleted entry must not be resurrected by a commit")
 }
+
+// The same guarantee through the domain's own write path: an entry created by
+// Learn — the path a simulated frame takes — is aged by a tick and must
+// survive a <commit> with its whole contents.
+func TestLearnedMACEntrySurvivesACommit(t *testing.T) {
+	manager, _, st := newTestManager(t)
+	ctx := t.Context()
+
+	const mac = "02:00:00:00:00:bb"
+	learned, err := manager.Learn(ctx, mac, 100, "eth0")
+	require.NoError(t, err)
+	require.Equal(t, model.MACEntryTypeDynamic, learned.Type)
+
+	// Two sweeps: the first starts the aging clock, the second writes the age
+	// leaf through SetState.
+	fake := manager.Clock().(*clock.FakeClock)
+	require.NoError(t, manager.Tick(ctx))
+	fake.Advance(5 * time.Second)
+	require.NoError(t, manager.Tick(ctx))
+
+	require.NoError(t, st.Commit(ctx), "a learned entry must not block a commit")
+
+	entry, err := manager.MACEntry(ctx, mac)
+	require.NoError(t, err, "the learned entry must survive the commit")
+	assert.Equal(t, model.MACEntryTypeDynamic, entry.Type)
+	assert.Equal(t, uint16(100), entry.VLAN)
+	assert.Equal(t, uint32(2), entry.Port, "eth0 is bridge port 2")
+	assert.Equal(t, uint32(5), entry.Age, "the aged state must survive the commit too")
+}
