@@ -22,6 +22,7 @@ const (
 const (
 	TagMalformedMessage      = "malformed-message"
 	TagTooBig                = "too-big"
+	TagMissingAttribute      = "missing-attribute"
 	TagMissingElement        = "missing-element"
 	TagUnknownElement        = "unknown-element"
 	TagInvalidValue          = "invalid-value"
@@ -75,6 +76,24 @@ func UnknownElement(name string) *Error {
 // Malformed reports a message the server could not parse.
 func Malformed(format string, args ...any) *Error {
 	return newError(TypeRPC, TagMalformedMessage, "", format, args...)
+}
+
+// TooBig reports a message that exceeded the size limit.
+func TooBig(format string, args ...any) *Error {
+	return newError(TypeRPC, TagTooBig, "", format, args...)
+}
+
+// MissingAttribute reports a required attribute, for example message-id.
+// RFC 6241 §4.1 reports it as error-type rpc.
+func MissingAttribute(name string) *Error {
+	return newError(TypeRPC, TagMissingAttribute, "", "missing attribute %s", name)
+}
+
+// Denied reports an operation the caller may not perform, for example a
+// confirmed commit while another session owns the confirmed commit in
+// progress. Unlike AccessDenied it names no model path.
+func Denied(format string, args ...any) *Error {
+	return newError(TypeProtocol, TagAccessDenied, "", format, args...)
 }
 
 // InvalidValue reports a value the model rejects.

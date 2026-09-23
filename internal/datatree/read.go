@@ -219,16 +219,13 @@ func buildEntries(r *router.Router, values map[string]router.Result, prefix stri
 }
 
 // collect returns every leaf of one datastore keyed by its canonical router
-// path.
+// path. It is the router's shared bulk read — one locked store pass, one
+// schema resolution per path — used by every flattening consumer so no plane
+// grows its own version of "the datastore as a map".
 func collect(ctx context.Context, r *router.Router, ds store.Datastore) (map[string]router.Result, error) {
-	results, err := r.List(ctx, ds, "")
+	values, err := r.Values(ctx, ds)
 	if err != nil {
 		return nil, Failed(err)
-	}
-
-	values := make(map[string]router.Result, len(results))
-	for _, result := range results {
-		values[result.Path] = result
 	}
 	return values, nil
 }
