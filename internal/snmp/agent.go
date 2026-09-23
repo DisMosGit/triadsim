@@ -309,6 +309,11 @@ func (a *Agent) set(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.S
 }
 
 // applySet is set's body. The caller holds the router's transaction.
+//
+// The response codes are the SNMPv2c vocabulary of RFC 3416 §4.2.5, which
+// validates the variable bindings in order and reports the first failure with
+// its 1-based index. The v1 codes noSuchName(2), badValue(3) and readOnly(4)
+// are proxy-compatibility leftovers and are never sent.
 func (a *Agent) applySet(ctx context.Context, request *gosnmp.SnmpPacket) ([]gosnmp.SnmpPDU, gosnmp.SNMPError, uint8) {
 	proposed, err := a.runningSnapshot(ctx)
 	if err != nil {
@@ -325,38 +330,57 @@ func (a *Agent) applySet(ctx context.Context, request *gosnmp.SnmpPacket) ([]gos
 		// read-only (ifDescr, ifOperStatus) stays read-only over SNMP.
 		binding, ok := index.exact(varbind.Name)
 		if !ok {
-			return nil, gosnmp.NoSuchName, uint8(i + 1)
+			// §4.2.5 (7): the variable does not exist and the agent never
+			// creates instances over SNMP.
+			return nil, gosnmp.NoCreation, uint8(i + 1)
 		}
-		if !binding.Writable {
-			return nil, gosnmp.ReadOnly, uint8(i + 1)
-		}
-		// The binding carries the model path, so an object of a table that grew
-		// at runtime — a learned MAC entry — is writable too.
-		if binding.Path == "" {
-			return nil, gosnmp.NoSuchName, uint8(i + 1)
+		// The binding carries the model path, so an object of a table that
+		// grew at runtime — a learned MAC entry — is writable too; a constant
+		// object such as sysObjectID has no path and never is.
+		if !binding.Writable || binding.Path == "" {
+			// §4.2.5 (2)/(9): it exists (or is exposed) but cannot be
+			// modified.
+			return nil, gosnmp.NotWritable, uint8(i + 1)
 		}
 		value, err := fromPDU(varbind)
 		if err != nil {
+			// §4.2.5 (3): the ASN.1 type is inconsistent with the object's.
 			return nil, gosnmp.WrongType, uint8(i + 1)
 		}
 		result, err := a.router.Convert(binding.Path, value)
 		if err != nil {
 			switch {
 			case errors.Is(err, router.ErrReadOnly):
-				return nil, gosnmp.ReadOnly, uint8(i + 1)
+				// §4.2.5 (9): exists but can never be modified.
+				return nil, gosnmp.NotWritable, uint8(i + 1)
 			case errors.Is(err, router.ErrTypeMismatch):
+				// §4.2.5 (3): wrong type for this object.
 				return nil, gosnmp.WrongType, uint8(i + 1)
+			case errors.Is(err, router.ErrBadValue):
+				// §4.2.5 (6): the right type, but a value the object could
+				// under no circumstances hold.
+				return nil, gosnmp.WrongValue, uint8(i + 1)
+			case errors.Is(err, router.ErrNotFound):
+				// §4.2.5 (7): an instance that does not exist and cannot be
+				// created (a closed list).
+				return nil, gosnmp.NoCreation, uint8(i + 1)
 			default:
-				return nil, gosnmp.NoSuchName, uint8(i + 1)
+				// §4.2.5 (12).
+				return nil, gosnmp.GenErr, uint8(i + 1)
 			}
 		}
 		proposed[result.Path] = result.Value
 		changed[result.Path] = result.Value
-	}
 
-	if err := a.router.Validate(ctx, proposed); err != nil {
-		slog.DebugContext(ctx, "snmp: set rejected by validation", "error", err)
-		return nil, gosnmp.WrongValue, 1
+		// §4.2.5 validates the bindings one by one and reports the first
+		// failure's index. The model validates whole snapshots, so validate
+		// the proposal after each addition: the first index whose addition
+		// makes the configuration inconsistent is the reported one.
+		if err := a.router.Validate(ctx, proposed); err != nil {
+			slog.DebugContext(ctx, "snmp: set rejected by validation", "error", err)
+			// §4.2.5 (10): a value that could be held, but not now.
+			return nil, gosnmp.InconsistentValue, uint8(i + 1)
+		}
 	}
 
 	if err := a.router.Apply(ctx, store.Running, changed, nil); err != nil {
@@ -382,13 +406,13 @@ func (a *Agent) applySet(ctx context.Context, request *gosnmp.SnmpPacket) ([]gos
 
 // runningSnapshot copies the running datastore into a flat path/value map.
 func (a *Agent) runningSnapshot(ctx context.Context) (map[string]any, error) {
-	results, err := a.router.List(ctx, store.Running, "")
+	results, err := a.router.Values(ctx, store.Running)
 	if err != nil {
 		return nil, err
 	}
 	values := make(map[string]any, len(results))
-	for _, result := range results {
-		values[result.Path] = result.Value
+	for path, result := range results {
+		values[path] = result.Value
 	}
 	return values, nil
 }

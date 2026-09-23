@@ -29,8 +29,10 @@ const (
 	syncEQLOID   = "1.3.6.1.4.1.99999.2.1.5.0"
 )
 
-// newTestRouter returns a router over a seeded Memory store.
-func newTestRouter(t *testing.T) *router.Router {
+// newTestStoreRouter returns a router over a seeded Memory store plus the
+// store itself, for tests that drive the datastore lifecycle (commit) from
+// the outside.
+func newTestStoreRouter(t *testing.T) (*router.Router, *store.Memory) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -38,8 +40,16 @@ func newTestRouter(t *testing.T) *router.Router {
 	r, err := router.New(model.DefaultDevice(), st)
 	require.NoError(t, err)
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 	require.NoError(t, r.Seed(ctx, store.Running))
 	require.NoError(t, st.Rollback(ctx))
+	return r, st
+}
+
+// newTestRouter returns a router over a seeded Memory store.
+func newTestRouter(t *testing.T) *router.Router {
+	t.Helper()
+	r, _ := newTestStoreRouter(t)
 	return r
 }
 
@@ -47,8 +57,15 @@ func newTestRouter(t *testing.T) *router.Router {
 // ends.
 func startAgent(t *testing.T) *Agent {
 	t.Helper()
+	return startAgentOn(t, newTestRouter(t))
+}
 
-	agent := New(newTestRouter(t), Options{Addr: "127.0.0.1:0"})
+// startAgentOn serves an agent for r on an ephemeral loopback port until the
+// test ends.
+func startAgentOn(t *testing.T, r *router.Router) *Agent {
+	t.Helper()
+
+	agent := New(r, Options{Addr: "127.0.0.1:0"})
 	require.NoError(t, agent.Listen())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -167,7 +184,7 @@ func TestSetPTPDomain(t *testing.T) {
 	// A domain outside 0..127 is rejected by the model.
 	result, err = client.Set([]gosnmp.SnmpPDU{{Name: ptpDomainOID, Type: gosnmp.Gauge32, Value: uint32(200)}})
 	require.NoError(t, err)
-	assert.Equal(t, gosnmp.WrongValue, result.Error)
+	assert.Equal(t, gosnmp.InconsistentValue, result.Error) // RFC 3416 §4.2.5 (10): inconsistentValue(12)
 }
 
 func TestGetUnknownOID(t *testing.T) {
@@ -232,7 +249,7 @@ func TestSetReadOnlyIsRejected(t *testing.T) {
 	result, err := client.Set([]gosnmp.SnmpPDU{{Name: rssiOID, Type: gosnmp.OpaqueDouble, Value: -50.0}})
 
 	require.NoError(t, err)
-	assert.Equal(t, gosnmp.ReadOnly, result.Error)
+	assert.Equal(t, gosnmp.NotWritable, result.Error) // RFC 3416 §4.2.5 (9): notWritable(17), not the deprecated readOnly(4)
 
 	// The value is unchanged.
 	got, err := client.Get([]string{rssiOID})
@@ -247,7 +264,7 @@ func TestSetOutOfRangeIsRejected(t *testing.T) {
 	result, err := client.Set([]gosnmp.SnmpPDU{{Name: txPowerOID, Type: gosnmp.OpaqueDouble, Value: 999.0}})
 
 	require.NoError(t, err)
-	assert.Equal(t, gosnmp.WrongValue, result.Error)
+	assert.Equal(t, gosnmp.InconsistentValue, result.Error) // RFC 3416 §4.2.5 (10): inconsistentValue(12)
 
 	got, err := client.Get([]string{txPowerOID})
 	require.NoError(t, err)
@@ -356,5 +373,123 @@ func TestSetBridgeAgingTime(t *testing.T) {
 		{Name: "1.3.6.1.2.1.17.4.2.0", Type: gosnmp.Integer, Value: 1},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, gosnmp.WrongValue, result.Error)
+	assert.Equal(t, gosnmp.InconsistentValue, result.Error) // RFC 3416 §4.2.5 (10): inconsistentValue(12)
+}
+
+// SET failures carry the SNMPv2c vocabulary of RFC 3416 §4.2.5, pinned here
+// by their wire numbers from the §3 enumeration rather than by the gosnmp
+// constant names, so a constant rename upstream cannot hide a protocol
+// regression. error-index is the 1-based index of the failing variable
+// binding (§4.2.5).
+func TestSetErrorCodes(t *testing.T) {
+	agent := startAgent(t)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	tests := []struct {
+		name      string
+		varbinds  []gosnmp.SnmpPDU
+		wantError gosnmp.SNMPError // literal from RFC 3416 §3
+		wantIndex uint8
+	}{
+		{
+			name:      "unknown object is noCreation(11)",
+			varbinds:  []gosnmp.SnmpPDU{{Name: "1.3.6.1.2.1.99.9.0", Type: gosnmp.Integer, Value: 1}},
+			wantError: 11,
+			wantIndex: 1,
+		},
+		{
+			name:      "read-only object is notWritable(17)",
+			varbinds:  []gosnmp.SnmpPDU{{Name: rssiOID, Type: gosnmp.OpaqueDouble, Value: -50.0}},
+			wantError: 17,
+			wantIndex: 1,
+		},
+		{
+			name: "constant object is notWritable(17)",
+			varbinds: []gosnmp.SnmpPDU{
+				{Name: "1.3.6.1.2.1.1.2.0", Type: gosnmp.ObjectIdentifier, Value: ".1.3.6.1.4.1.99999.1"},
+			},
+			wantError: 17,
+			wantIndex: 1,
+		},
+		{
+			name:      "wrong ASN.1 type is wrongType(7)",
+			varbinds:  []gosnmp.SnmpPDU{{Name: sysNameOID, Type: gosnmp.Integer, Value: 5}},
+			wantError: 7,
+			wantIndex: 1,
+		},
+		{
+			name: "value outside the object's domain is wrongValue(10)",
+			// The SMI TruthValue atpc/enabled exposes is 1 or 2; 3 has the
+			// right ASN.1 type but can never be held.
+			varbinds:  []gosnmp.SnmpPDU{{Name: atpcOID, Type: gosnmp.Integer, Value: 3}},
+			wantError: 10,
+			wantIndex: 1,
+		},
+		{
+			name: "value outside the leaf's range is wrongValue(10)",
+			// dot1dTpAgingTime backs a uint32 leaf; a negative Integer can
+			// never be assigned to it.
+			varbinds:  []gosnmp.SnmpPDU{{Name: "1.3.6.1.2.1.17.4.2.0", Type: gosnmp.Integer, Value: -1}},
+			wantError: 10,
+			wantIndex: 1,
+		},
+		{
+			name: "model rejection is inconsistentValue(12)",
+			// 999 dBm is well outside the radio link's tx-power bounds.
+			varbinds:  []gosnmp.SnmpPDU{{Name: txPowerOID, Type: gosnmp.OpaqueDouble, Value: 999.0}},
+			wantError: 12,
+			wantIndex: 1,
+		},
+		{
+			name: "error-index names the failing varbind of a batch",
+			varbinds: []gosnmp.SnmpPDU{
+				{Name: sysNameOID, Type: gosnmp.OctetString, Value: "ok-name"},
+				{Name: rssiOID, Type: gosnmp.OpaqueDouble, Value: -50.0},
+			},
+			wantError: 17,
+			wantIndex: 2,
+		},
+		{
+			name: "a batch that turns inconsistent at varbind 2 reports 2",
+			varbinds: []gosnmp.SnmpPDU{
+				{Name: sysNameOID, Type: gosnmp.OctetString, Value: "ok-name"},
+				{Name: txPowerOID, Type: gosnmp.OpaqueDouble, Value: 999.0},
+			},
+			wantError: 12,
+			wantIndex: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := client.Set(tt.varbinds)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantError, result.Error)
+			assert.Equal(t, tt.wantIndex, result.ErrorIndex)
+		})
+	}
+}
+
+// A SET writes the running datastore; the store mirrors it into candidate, so
+// the commit that makes running a copy of candidate cannot revert it. This is
+// the SNMP-side half of the learn-across-a-commit regression guard (the L2
+// half lives in internal/l2/commit_regression_test.go).
+func TestSetSurvivesCommit(t *testing.T) {
+	ctx := context.Background()
+	r, st := newTestStoreRouter(t)
+	agent := startAgentOn(t, r)
+	client := newClient(t, agent.Addr(), DefaultCommunity)
+
+	result, err := client.Set([]gosnmp.SnmpPDU{
+		{Name: "1.3.6.1.2.1.17.4.2.0", Type: gosnmp.Integer, Value: 600},
+	})
+	require.NoError(t, err)
+	require.Equal(t, gosnmp.NoError, result.Error)
+
+	require.NoError(t, st.Commit(ctx))
+
+	got, err := client.Get([]string{"1.3.6.1.2.1.17.4.2.0"})
+	require.NoError(t, err)
+	assert.Equal(t, 600, got.Variables[0].Value, "a commit must not revert an SNMP SET")
 }
