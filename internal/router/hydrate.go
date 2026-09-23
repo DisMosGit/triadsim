@@ -1,7 +1,6 @@
 package router
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -30,10 +29,7 @@ import (
 // The map is permissive by design: it rebuilds whatever the store says. The
 // write path is what enforces the creatable list contract, in selectElement.
 func (r *Router) deviceFromValues(values map[string]any) (*model.Device, error) {
-	device, err := cloneDevice(r.root)
-	if err != nil {
-		return nil, err
-	}
+	device := cloneDevice(r.root)
 	hydrator, err := newHydrator(values)
 	if err != nil {
 		return nil, err
@@ -202,18 +198,69 @@ func keyPredicateOf(element reflect.Value) (string, bool) {
 	return keyTagName(t) + "=" + scalarString(value), true
 }
 
-// cloneDevice deep-copies a device through its JSON representation. The copy
-// keeps every concrete type because the model carries json tags on every field.
-func cloneDevice(root *model.Device) (*model.Device, error) {
-	data, err := json.Marshal(root)
-	if err != nil {
-		return nil, fmt.Errorf("router: clone model: %w", err)
+// cloneDevice deep-copies the device template structurally. A JSON
+// marshal/unmarshal round-trip would do, but it is measurably slower and the
+// rebuild runs on every SNMP request; the model is plain structs, slices,
+// pointers and scalars, so a reflection copy is exact. Unexported fields
+// (none in the model) are skipped, matching what the JSON round-trip kept.
+func cloneDevice(root *model.Device) *model.Device {
+	return deepCopy(reflect.ValueOf(root)).Interface().(*model.Device)
+}
+
+// deepCopy returns a detached copy of v. Scalars are immutable and returned
+// as they are; containers are rebuilt element by element.
+func deepCopy(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Interface:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type()).Elem()
+		out.Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			out.SetMapIndex(deepCopy(iter.Key()), deepCopy(iter.Value()))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.NumField(); i++ {
+			if out.Field(i).CanSet() {
+				out.Field(i).Set(deepCopy(v.Field(i)))
+			}
+		}
+		return out
+	default:
+		return v
 	}
-	var clone model.Device
-	if err := json.Unmarshal(data, &clone); err != nil {
-		return nil, fmt.Errorf("router: clone model: %w", err)
-	}
-	return &clone, nil
 }
 
 // assignPath walks segs from an addressable root and stores value in the leaf

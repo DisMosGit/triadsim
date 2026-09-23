@@ -102,7 +102,11 @@ func run(ctx context.Context, configPath string, out io.Writer, deps runtimeDeps
 	if err != nil {
 		return fmt.Errorf("setup router: %w", err)
 	}
+	// The router hands the store the two schema-aware hooks: what a state
+	// leaf is (kept out of the persisted startup document) and how to
+	// validate a candidate or a loaded startup file.
 	st.SetValidator(r.Validate)
+	st.SetStateFilter(r.IsState)
 
 	if err := st.LoadStartup(ctx); err != nil {
 		return fmt.Errorf("load startup: %w", err)
@@ -296,8 +300,9 @@ func shutdownServer(server *http.Server) {
 
 // runUptime keeps the exposed system-info/uptime leaf in step with the wall
 // clock, so the sysUpTime object and the trap timeticks report the same value.
-// The leaf is state: SetState writes it to running and candidate and it is
-// never persisted.
+// The leaf is state: SetState writes it to running and candidate, and the
+// store's state filter keeps it out of the persisted startup document, so it
+// is never persisted and cannot reappear stale after a restart.
 func runUptime(ctx context.Context, r *router.Router) {
 	start := time.Now()
 	ticker := time.NewTicker(uptimeInterval)

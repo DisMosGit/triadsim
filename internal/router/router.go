@@ -30,6 +30,10 @@ var (
 	ErrReadOnly = errors.New("router: node is read-only")
 	// ErrTypeMismatch means the value cannot be assigned to the node's type.
 	ErrTypeMismatch = errors.New("router: value type mismatch")
+	// ErrBadValue means the value has the node's type but can never be held
+	// by it: out of range, or outside the node's value domain. SNMP maps it
+	// to RFC 3416 wrongValue, distinct from wrongType.
+	ErrBadValue = errors.New("router: value out of domain")
 	// ErrUnknownOID means the OID is not exposed by the OID tables.
 	ErrUnknownOID = errors.New("router: unknown OID")
 )
@@ -99,6 +103,18 @@ type Router struct {
 	// Transaction and never by Set or Delete, which stay single-store-operation
 	// calls.
 	txMu sync.Mutex
+
+	// bindMu guards bindCache, the memoized SNMP object index.
+	bindMu    sync.Mutex
+	bindCache bindingCache
+}
+
+// bindingCache memoizes the SNMP object index of one datastore generation.
+// The bindings slice is shared with callers, which must not modify it.
+type bindingCache struct {
+	ds         store.Datastore
+	generation uint64
+	bindings   []Binding
 }
 
 // New builds a router for root and st. It fails when the template cannot be
@@ -362,11 +378,13 @@ func (r *Router) convert(path string, value any, allowReadOnly bool) (Result, er
 	}
 
 	// An exposed object may need its protocol value translated back to the
-	// model's type, for example the TruthValue 1/2 of atpc/enabled.
+	// model's type, for example the TruthValue 1/2 of atpc/enabled. A value
+	// the decoder rejects has the right type but can never be held, which is
+	// ErrBadValue rather than ErrTypeMismatch.
 	if object, ok := r.byPath[parsed.String()]; ok && object.decode != nil {
 		decoded, err := object.decode(value)
 		if err != nil {
-			return Result{}, fmt.Errorf("%s: %w: %v", parsed.String(), ErrTypeMismatch, err)
+			return Result{}, fmt.Errorf("%s: %w: %v", parsed.String(), ErrBadValue, err)
 		}
 		value = decoded
 	}
@@ -503,25 +521,96 @@ func (r *Router) Apply(ctx context.Context, ds store.Datastore, values map[strin
 	return r.store.Apply(ctx, ds, converted, deletions)
 }
 
-// List returns every leaf strictly below prefix in ds.
+// List returns every leaf strictly below prefix in ds, in lexicographic
+// order. It is the ordered projection of Values.
 func (r *Router) List(ctx context.Context, ds store.Datastore, prefix string) ([]Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	paths, err := r.store.List(ctx, ds, prefix)
+	values, err := r.store.Values(ctx, ds)
 	if err != nil {
 		return nil, err
 	}
 
+	needle := ""
+	if prefix != "" {
+		needle = prefix + "/"
+	}
+	paths := make([]string, 0, len(values))
+	for path := range values {
+		if prefix == "" || strings.HasPrefix(path, needle) {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
 	results := make([]Result, 0, len(paths))
 	for _, path := range paths {
-		result, err := r.Get(ctx, ds, path)
+		result, err := r.describe(path, values[path])
 		if err != nil {
 			return nil, err
 		}
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+// Values returns every leaf of ds keyed by canonical path. It is the one
+// flattening primitive: the store copies a whole datastore in a single locked
+// pass and the router resolves each path against the schema exactly once, so
+// consumers — SNMP's request index, the data-tree read engine, the device
+// rebuild — share one implementation instead of each doing a List with one
+// Get per path.
+func (r *Router) Values(ctx context.Context, ds store.Datastore) (map[string]Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	values, err := r.store.Values(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make(map[string]Result, len(values))
+	for path, value := range values {
+		result, err := r.describe(path, value)
+		if err != nil {
+			return nil, err
+		}
+		results[path] = result
+	}
+	return results, nil
+}
+
+// describe resolves one stored leaf into its Result without touching the
+// store again.
+func (r *Router) describe(path string, value any) (Result, error) {
+	parsed, err := Parse(path)
+	if err != nil {
+		return Result{}, err
+	}
+	resolved, err := resolve(reflect.ValueOf(r.root), parsed.Segments)
+	if err != nil {
+		return Result{}, err
+	}
+	if !isLeaf(resolved.value) {
+		return Result{}, fmt.Errorf("%w: %s is not a leaf", ErrNotFound, parsed.String())
+	}
+	return r.result(parsed.String(), value, !resolved.readOnly), nil
+}
+
+// IsState reports whether path addresses a leaf tagged config:"false". The
+// store uses it to keep volatile leaves out of the persisted startup
+// document. An unresolvable path is not state.
+func (r *Router) IsState(path string) bool {
+	parsed, err := Parse(path)
+	if err != nil {
+		return false
+	}
+	resolved, err := resolve(reflect.ValueOf(r.root), parsed.Segments)
+	if err != nil {
+		return false
+	}
+	return resolved.readOnly
 }
 
 // Dispatch executes one operation.
@@ -570,10 +659,28 @@ func (r *Router) Seed(ctx context.Context, ds store.Datastore) error {
 // The OID table is applied to the device rebuilt from ds rather than to the
 // boot template, so tables that grow at runtime — VLANs, the MAC forwarding
 // database, STP ports — expose the instances the datastore actually holds.
+//
+// The rebuild is memoized per datastore generation: one SNMP request consults
+// the index several times (the varbind lookups, the SET snapshot, the write
+// echo), and any leaf write — state included — advances the generation and
+// invalidates the cache. The returned slice is shared; callers must not
+// modify it.
 func (r *Router) Bindings(ctx context.Context, ds store.Datastore) ([]Binding, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	generation, err := r.store.Generation(ctx, ds)
+	if err != nil {
+		return nil, err
+	}
+	r.bindMu.Lock()
+	if r.bindCache.ds == ds && r.bindCache.generation == generation {
+		bindings := r.bindCache.bindings
+		r.bindMu.Unlock()
+		return bindings, nil
+	}
+	r.bindMu.Unlock()
 
 	values, err := r.flatValues(ctx, ds)
 	if err != nil {
@@ -610,6 +717,10 @@ func (r *Router) Bindings(ctx context.Context, ds store.Datastore) ([]Binding, e
 			Writable: object.writable,
 		})
 	}
+
+	r.bindMu.Lock()
+	r.bindCache = bindingCache{ds: ds, generation: generation, bindings: bindings}
+	r.bindMu.Unlock()
 	return bindings, nil
 }
 
@@ -624,25 +735,13 @@ func (r *Router) Snapshot(ctx context.Context, ds store.Datastore) (*model.Devic
 	return r.deviceFromValues(values)
 }
 
-// flatValues reads every stored path of ds into a snapshot map.
+// flatValues reads every stored path of ds into a snapshot map. It is the
+// store's bulk read, which copies a whole datastore in one locked pass.
 func (r *Router) flatValues(ctx context.Context, ds store.Datastore) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
-	paths, err := r.store.List(ctx, ds, "")
-	if err != nil {
-		return nil, err
-	}
-	values := make(map[string]any, len(paths))
-	for _, path := range paths {
-		value, err := r.store.Get(ctx, ds, path)
-		if err != nil {
-			return nil, err
-		}
-		values[path] = value
-	}
-	return values, nil
+	return r.store.Values(ctx, ds)
 }
 
 // PathForOID returns the model path behind an exposed OID. A leading dot, as

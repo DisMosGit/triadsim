@@ -263,7 +263,8 @@ func leafValue(v reflect.Value) (any, error) {
 }
 
 // assignLeaf sets dst from value, converting between compatible numeric types
-// and reporting a range or kind mismatch as ErrTypeMismatch.
+// and reporting a kind mismatch as ErrTypeMismatch and a range violation as
+// ErrBadValue.
 func assignLeaf(dst reflect.Value, value any) error {
 	raw := reflect.ValueOf(value)
 	if !raw.IsValid() {
@@ -286,17 +287,29 @@ func assignLeaf(dst reflect.Value, value any) error {
 			return nil
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if x, ok := toInt64(raw); ok && !dst.OverflowInt(x) {
+		if x, ok := toInt64(raw); ok {
+			if dst.OverflowInt(x) {
+				return fmt.Errorf("%w: %v overflows %s", ErrBadValue, value, dst.Type())
+			}
 			dst.SetInt(x)
 			return nil
 		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if x, ok := toUint64(raw); ok && !dst.OverflowUint(x) {
+		if x, ok := toUint64(raw); ok {
+			if dst.OverflowUint(x) {
+				return fmt.Errorf("%w: %v overflows %s", ErrBadValue, value, dst.Type())
+			}
 			dst.SetUint(x)
 			return nil
 		}
+		if x, ok := toInt64(raw); ok && x < 0 {
+			return fmt.Errorf("%w: %v overflows %s", ErrBadValue, value, dst.Type())
+		}
 	case reflect.Float32, reflect.Float64:
-		if x, ok := toFloat64(raw); ok && !dst.OverflowFloat(x) {
+		if x, ok := toFloat64(raw); ok {
+			if dst.OverflowFloat(x) {
+				return fmt.Errorf("%w: %v overflows %s", ErrBadValue, value, dst.Type())
+			}
 			dst.SetFloat(x)
 			return nil
 		}

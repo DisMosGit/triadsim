@@ -146,10 +146,11 @@ func TestSetRejectsMismatchedValue(t *testing.T) {
 		name  string
 		path  string
 		value any
+		want  error
 	}{
-		{name: "string for float", path: radioPowerPath, value: "high"},
-		{name: "overflow for uint32", path: "interfaces/interface[name=eth0]/mtu", value: uint64(1) << 40},
-		{name: "negative for uint32", path: "interfaces/interface[name=eth0]/mtu", value: -1},
+		{name: "string for float", path: radioPowerPath, value: "high", want: ErrTypeMismatch},
+		{name: "overflow for uint32", path: "interfaces/interface[name=eth0]/mtu", value: uint64(1) << 40, want: ErrBadValue},
+		{name: "negative for uint32", path: "interfaces/interface[name=eth0]/mtu", value: -1, want: ErrBadValue},
 	}
 
 	for _, tt := range tests {
@@ -157,7 +158,7 @@ func TestSetRejectsMismatchedValue(t *testing.T) {
 			_, err := r.Set(ctx, store.Running, tt.path, tt.value)
 
 			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrTypeMismatch)
+			assert.ErrorIs(t, err, tt.want)
 		})
 	}
 }
@@ -318,4 +319,43 @@ func snapshotDatastore(ctx context.Context, st store.Store, ds store.Datastore) 
 		values[path] = value
 	}
 	return values, nil
+}
+
+// The SNMP object index is memoized per datastore generation (one request
+// consults it several times), so a write of any kind — state included — must
+// invalidate it: the next Bindings call has to reflect the new value.
+func TestBindingsFollowStoreWrites(t *testing.T) {
+	ctx := context.Background()
+	r, _ := newTestRouter(t)
+
+	before, err := r.Bindings(ctx, store.Running)
+	require.NoError(t, err)
+	assert.Equal(t, "triadsim-01", bindingValue(t, before, "1.3.6.1.2.1.1.5.0"))
+
+	_, err = r.Set(ctx, store.Running, "system-info/name", "renamed")
+	require.NoError(t, err)
+
+	after, err := r.Bindings(ctx, store.Running)
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", bindingValue(t, after, "1.3.6.1.2.1.1.5.0"))
+
+	// A state write invalidates the cache just as well: uptime is exposed.
+	_, err = r.SetState(ctx, "system-info/uptime", uint32(30))
+	require.NoError(t, err)
+
+	after, err = r.Bindings(ctx, store.Running)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3000), bindingValue(t, after, "1.3.6.1.2.1.1.3.0"), "30s in TimeTicks")
+}
+
+// bindingValue returns the value of the binding with the given OID.
+func bindingValue(t *testing.T, bindings []Binding, oid string) any {
+	t.Helper()
+	for _, binding := range bindings {
+		if binding.OID == oid {
+			return binding.Value
+		}
+	}
+	t.Fatalf("no binding for OID %s", oid)
+	return nil
 }
