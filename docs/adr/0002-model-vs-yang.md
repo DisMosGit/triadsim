@@ -67,4 +67,5 @@ The rules that follow:
 - **An untyped map-based model.** Rejected: no compile-time safety, and `Validate()` for a
   hundreds-of-leaves tree becomes unmaintainable.
 - **No YANG files at all.** Rejected: they are the lingua franca of the domain, they make the
-  model reviewable by network engineers, and `ROADMAP.md` Phase 7 requires them.
+  model reviewable by network engineers, and every managed object ships a YANG module under
+  `yang/` beside it.

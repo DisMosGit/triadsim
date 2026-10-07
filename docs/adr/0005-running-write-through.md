@@ -13,14 +13,13 @@ The store keeps three datastores (`docs/store.md`). NETCONF works on `candidate`
 - SNMP `SetRequest` (`internal/snmp/agent.go`), because SNMP has no commit and a SET must take
   effect immediately;
 - the L2 domain, which configures VLANs, MAC entries, STP port state and LLDP neighbours through
-  `Router.Set` on running (`AGENTS.md`, `ROADMAP.md` Phase 4);
+  `Router.Set` on running (`AGENTS.md`);
 - a NETCONF `edit-config` or RESTCONF write that targets `running`, which the server advertises
   through `:writable-running:1.0` as well as `:candidate:1.0`.
 
 A running-only write was invisible to candidate, so the next `<commit>` replaced running with
-candidate and silently reverted it. Phase 4 recorded this as a deliberate compromise for RESTCONF
-writes and flagged it for revisit; it applied just as much to SNMP and to the domain's own
-configured state.
+candidate and silently reverted it. This was a deliberate compromise for RESTCONF writes, flagged
+for revisit; it applied just as much to SNMP and to the domain's own configured state.
 
 The same asymmetry broke removal. `internal/l2` removes a list entry by deleting its leaves from
 `running` only, while `Router.SetState` wrote read-only state (a MAC entry's `age`, a counter)

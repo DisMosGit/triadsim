@@ -81,12 +81,11 @@ boot simply starts from the built-in seed.
 A `startup.json` written by an older version does not contain the leaves added since. Containers
 keep their seeded values, but a **list** that is absent from the datastore is pruned from the
 hydrated device (see the snapshot hydration in [architecture.md](architecture.md)), so a
-pre-Phase-5 file boots without the seeded SyncE interfaces. Delete `startup.json` to pick up the
-seed again.
+`startup.json` written before SyncE was added boots without the seeded SyncE interfaces. Delete
+`startup.json` to pick up the seed again.
 
 ## Notes
 
-The configuration is intentionally flat, matching the field list in
-[ROADMAP.md](../ROADMAP.md) Phase 0.4. SNMP community strings are not configurable in the MVP:
+The configuration is intentionally flat. SNMP community strings are not configurable in the MVP:
 community `public` is hardcoded, and there is no trap-receiver list — `docs/protocols/SNMP.md`
 documents the same flat schema.

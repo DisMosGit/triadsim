@@ -7,7 +7,7 @@ one EventBus, management planes SNMP v2c / NETCONF / RESTCONF (+ optional gNMI).
 No CGO, no sidecar processes, no external services, no Web UI (separate repo).
 
 ## See also
-- `ROADMAP.md` — phased plan, atomic tasks and their definition of done. Pick the lowest open phase first.
+- `openspec/changes/` — planned and in-flight work (proposal, spec deltas, design, tasks). Run `openspec list` to see what is open.
 - `CONTRIBUTING.md` — branches, Conventional Commits, code style and test rules.
 - `docs/` — architecture, store, event bus, configuration and ADRs; `docs/protocols/` — protocol references.
 
@@ -16,7 +16,7 @@ No CGO, no sidecar processes, no external services, no Web UI (separate repo).
 go build ./...                                              # build
 go test ./...                                               # all tests
 go test ./internal/store -run TestCandidate                 # single test
-go test ./... -update                                       # regenerate golden files, then review the diff
+go test ./internal/netconf -update                          # regenerate golden files, then review the diff
 gofmt -w . && go vet ./...                                  # required before finishing
 go run ./cmd/simulator start --config configs/default.yaml  # run
 ```

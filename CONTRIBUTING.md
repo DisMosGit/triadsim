@@ -31,6 +31,23 @@ fix(netconf): handle confirmed-commit timeout rollback
 docs(snmp): document vendor OID tree and traps
 ```
 
+## Planning with OpenSpec
+
+Non-trivial work is planned as an OpenSpec change rather than tracked in a roadmap file. A change
+lives under `openspec/changes/<name>/` and is a short proposal, any spec deltas, an optional design
+note, and a task list.
+
+The loop is deliberately small:
+
+1. **Propose** — `openspec new change <name>`, then write the artifacts.
+2. **Review** — read the proposal before the code exists.
+3. **Implement** — work the task list, ticking tasks off as they land.
+4. **Archive** — `openspec archive <name>` once the change is done.
+
+`openspec list` shows what is in flight and `openspec validate <name> --strict` checks a change's
+artifacts. Skip all of this for a one-line fix — it is there for work that needs a plan, not for
+every commit.
+
 ## Local development
 
 Requirements: Go 1.27+, optional Docker for integration tests.
@@ -90,7 +107,7 @@ Layer rules:
 |-------|------|---------|
 | Unit | `internal/...` | `go test ./...` |
 | Integration | `test/integration/` | `go test -tags=integration ./...` |
-| Golden | `testdata/*.golden.json` | `go test ./... -update` |
+| Golden | `testdata/*.golden.json` | `go test ./internal/netconf -update` |
 
 No `time.Sleep()` in tests — use the injectable `clock.Clock` interface.  
 Use `t.TempDir()` for persistence tests.  

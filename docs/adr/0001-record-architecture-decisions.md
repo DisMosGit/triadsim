@@ -9,7 +9,7 @@
 TriadSim makes architectural choices that are cheap to apply now and expensive to reverse later:
 models instead of a runtime YANG parser, one binary instead of services, no authentication
 anywhere, simplified STP and PTP state machines. Without a written record, the reasoning behind
-those choices is lost and the same debate is repeated in later phases (or worse, silently
+those choices is lost and the same debate is repeated in later work (or worse, silently
 reversed by a well-meaning change).
 
 ## Decision
@@ -20,9 +20,9 @@ Record in `docs/adr/`, using the format in [template.md](template.md).
 A decision is significant when it:
 
 - fixes or changes a package boundary, a public interface or a wire-visible behaviour;
-- closes off an alternative that a future phase is likely to revisit;
+- closes off an alternative that later work is likely to revisit;
 - introduces or removes a dependency, an external service or a persistence format;
-- deviates from `ROADMAP.md`, `AGENTS.md` or a protocol reference.
+- deviates from `AGENTS.md`, an OpenSpec change or a protocol reference.
 
 Rules:
 
@@ -40,7 +40,7 @@ Rules:
 
 - Reviewers can see why the project looks the way it does, and can challenge a decision in one
   place instead of re-deriving it.
-- Traceability between code, roadmap and protocol documentation improves.
+- Traceability between code, the planned work and the protocol documentation improves.
 - The cost is small: one short document per significant decision, maintained with the code.
 
 ## Alternatives

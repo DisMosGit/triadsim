@@ -40,8 +40,8 @@ Index of the TriadSim documentation. Start with the architecture, then the subsy
 
 ## Planned
 
-Not written yet; they arrive with the phases that produce their content:
+Not written yet; they arrive with the work that produces their content:
 `testing.md` (test strategy), `glossary.md` (RRL/PTP/QinQ terms) and `faq.md`.
 
 Higher-level project documents live in the repository root: [README.md](../README.md),
-[ROADMAP.md](../ROADMAP.md), [CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md).
+[CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md).

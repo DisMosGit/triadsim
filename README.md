@@ -1,32 +1,48 @@
 # TriadSim
 
-**TriadSim** is a pure-Go, single-binary simulator of a telecom device that combines three
-domains on one managed device:
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE.md)
+![No CGO](https://img.shields.io/badge/CGO-disabled-success)
+![Single binary](https://img.shields.io/badge/binary-single-informational)
+
+**TriadSim** is a pure-Go, single-binary simulator of a telecom device that combines three domains on
+one managed device: **radio link (RRL)**, **L2 switching** and **synchronization**. All three share
+one managed-object model, one state store and one event bus, and are exposed through a single
+management plane: **SNMP v2c**, **NETCONF**, **RESTCONF** and (optionally) **gNMI**. No CGO, no
+sidecar processes, no external services — one binary, one process, no Web UI (that lives in a
+separate repository).
+
+## Key features
 
 - **Radio link (RRL)** — link budget, RSSI, ATPC, ACM, modulation profiles, fade margin, capacity.
 - **L2 switching** — VLAN (802.1Q, QinQ), MAC table, STP/RSTP, LLDP, interface counters, broadcast storms.
 - **Synchronization** — PTP (IEEE 1588), SyncE, ESMC/SSM, holdover, quality levels.
+- **One management plane over all three** — SNMP v2c with a trap sender, NETCONF with
+  candidate/commit and notifications, a chi-based RESTCONF server, and an optional gNMI service.
+- **Cross-domain scenarios** — one simulated radio failure raises the alarm, moves the PTP clock to
+  holdover and emits a trap, a notification, a gNMI update and a metric.
 
-All three domains share one managed-object model, one state store and one event bus, and are
-exposed through a single management plane: **SNMP v2c**, **NETCONF**, **RESTCONF** and
-(optionally) **gNMI**. No CGO, no sidecar processes, no external services — one binary, one
-process, no Web UI (that lives in a separate repository).
-
-> **Status: Phase 7 — gNMI, YANG and v0.1.0.** The repository builds, tests and starts; the
-> foundations, managed-object models (radio, L2, sync, device), the running/candidate/startup
-> store, the router, the SNMP v2c agent **and trap sender** with the Prometheus endpoint, the
-> NETCONF subsystem (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with
-> rollback, `create-subscription` notifications), the chi-based RESTCONF server, the L2 domain
-> (VLAN and QinQ, MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm
-> simulation), the sync domain (PTP state machine with holdover, SyncE source selection, ESMC/SSM
-> quality levels, simulated offset/jitter), the **radio domain** (link budget, ATPC, ACM,
-> `radioLinkDown`/`radioLinkDegraded`) and the **optional gNMI service** (`Capabilities`, `Get`,
-> `Set`, `Subscribe`) are in place. The cross-domain scenario runs end to end: one
-> `POST /api/simulate/radio-failure` produces the alarm, the PTP holdover, an SNMP trap, a NETCONF
-> notification, a gNMI update and the `simulator_alarms_total` counter. The CLI gained
-> `alarm inject`, `dump`, `config validate` and `schema` (with the embedded YANG modules); ADRs
-> 0002-0004 record the model, monolith and stack decisions. See [ROADMAP.md](ROADMAP.md) and
-> [docs/demo.md](docs/demo.md).
+> **Status: v0.1.0.** The repository builds, tests and starts. In place: the foundations, the
+> managed-object models (radio, L2, sync, device), the running/candidate/startup store, the router,
+> the SNMP v2c agent **and trap sender** with the Prometheus endpoint, the NETCONF subsystem
+> (`get-config`/`edit-config`/`commit`/`discard-changes`, confirmed commit with rollback,
+> `create-subscription` notifications), the chi-based RESTCONF server, the L2 domain (VLAN and QinQ,
+> MAC forwarding database, simplified STP/RSTP, LLDP, counters, broadcast-storm simulation), the
+> sync domain (PTP state machine with holdover, SyncE source selection, ESMC/SSM quality levels,
+> simulated offset/jitter), the radio domain (link budget, ATPC, ACM,
+> `radioLinkDown`/`radioLinkDegraded`) and the optional gNMI service (`Capabilities`, `Get`, `Set`,
+> `Subscribe`).
+>
+> The cross-domain scenario runs end to end: one `POST /api/simulate/radio-failure` produces the
+> alarm, the PTP holdover, an SNMP trap, a NETCONF notification, a gNMI update and the
+> `simulator_alarms_total` counter. The CLI offers `alarm inject`, `dump`, `config validate` and
+> `schema` (with the embedded YANG modules), and ADRs 0002-0004 record the model, monolith and stack
+> decisions.
+>
+> What is absent is deliberate: SNMP v3 and informs, RESTCONF auth/TLS and YANG Patch, and real
+> STP/RSTP or PTP/SyncE protocol stacks. Known gaps are tracked as OpenSpec changes under
+> `openspec/changes/` rather than in a roadmap file. See [docs/demo.md](docs/demo.md) for the full
+> walkthrough.
 
 ## Quick start
 
@@ -124,12 +140,12 @@ rather than the privileged IANA `830`, and SNMP on `1161` rather than `161`.
 
 ## Demo
 
-The Phase 2 end-to-end check is a NETCONF round trip: connect with `ssh`, `edit-config` into the
+The NETCONF end-to-end check is a round trip: connect with `ssh`, `edit-config` into the
 candidate, `commit`, then `get-config` returns the committed value. The full transcript is in
 [docs/protocols/NETCONF.md](docs/protocols/NETCONF.md#9-walkthrough) and the golden files replay it
 in the test suite.
 
-Phase 3 adds the confirmed commit and notifications. In the `ssh` session, subscribe to the event
+The same subsystem handles the confirmed commit and notifications. In the `ssh` session, subscribe to the event
 stream and then watch a commit made from another session arrive as a `<notification>`:
 
 ```xml
@@ -142,9 +158,9 @@ A commit can also be provisional: `<commit><confirmed/><confirm-timeout>30</conf
 applies the configuration and reverts it unless a `<commit/>` follows within 30 seconds. See
 [docs/protocols/NETCONF.md §7.3](docs/protocols/NETCONF.md#73-commit).
 
-The SNMP walk from Quick start is the Phase 1 check (`ifDescr` returns the three interfaces and
-the vendor RSSI OID returns a float). Phase 4 adds the L2 checks: create a VLAN over RESTCONF and
-walk the forwarding database over SNMP.
+The SNMP walk from Quick start is the first sanity check (`ifDescr` returns the three interfaces and
+the vendor RSSI OID returns a float). The L2 checks create a VLAN over RESTCONF and walk the
+forwarding database over SNMP.
 
 ```bash
 # create VLAN 200 (running datastore) and read it back
@@ -159,7 +175,7 @@ snmpwalk -v2c -c public localhost:1161 1.3.6.1.2.1.17.4.3.1.2
 # SNMPv2-SMI::mib-2.17.4.3.1.2.2.0.0.0.0.2 = INTEGER: 3
 ```
 
-The cross-domain scenario is the Phase 6 check: one radio failure becomes an alarm, a PTP holdover,
+The cross-domain scenario ties the three domains together: one radio failure becomes an alarm, a PTP holdover,
 an SNMP trap, a NETCONF notification, a gNMI update and a metric.
 
 ```bash
@@ -283,15 +299,38 @@ docs/                architecture, store, eventbus, config, cli, metrics, demo, 
 scripts/             check.sh, demo.sh
 test/integration/    testcontainers-based integration tests (build tag `integration`)
 testdata/            golden files (testdata/netconf/ NETCONF transcripts)
+openspec/changes/    OpenSpec changes — planned and in-flight work
+.agents/skills/      agent skills, including the commit workflow
 ```
+
+## Planning with OpenSpec
+
+Work in flight is planned with OpenSpec rather than in a roadmap file. Every change lives in its own
+directory under `openspec/changes/<name>/` and carries four artifacts: a proposal (why and what),
+spec deltas for any behaviour change, a design note when a decision needs recording, and the task
+list that implementation ticks off.
+
+The loop is: **propose** (`openspec new change <name>`, then fill the artifacts) → **review** the
+proposal before writing code → **implement** the tasks (`openspec instructions apply --change <name>`)
+→ **archive** the finished change with `openspec archive`. `openspec list` shows what is in flight
+and `openspec validate <name> --strict` checks a change's artifacts.
+
+Release history is not kept in the repository — it lives in
+[GitHub Releases](https://github.com/DisMosGit/triadsim/releases).
+
+## Contributing
+
+Branches, commit conventions, code style and test rules are in [CONTRIBUTING.md](CONTRIBUTING.md);
+[AGENTS.md](AGENTS.md) carries the same constraints for agentic IDEs. Planned work goes through an
+OpenSpec change, and `./scripts/check.sh` must pass before a pull request.
 
 ## Documentation
 
-- [ROADMAP.md](ROADMAP.md) — phased plan and definition of done.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — branches, commit conventions, code style, tests.
 - [AGENTS.md](AGENTS.md) — instructions for agentic IDEs.
 - `docs/` — architecture, store, event bus, configuration, CLI, metrics, demo and ADRs.
 - `docs/protocols/` — SNMP, NETCONF, RESTCONF, gNMI, PTP, SyncE, L2 and RRL references.
+- `openspec/changes/` — planned and in-flight work.
 
 ## License
 

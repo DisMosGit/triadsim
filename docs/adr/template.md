@@ -8,7 +8,7 @@
 
 The forces at play: the problem being solved, the constraints (MVP scope, closed dependency
 list, no external services, determinism in tests) and anything a reader needs to judge the
-decision. Reference `docs/protocols/*.md`, `ROADMAP.md` or code instead of restating them.
+decision. Reference `docs/protocols/*.md`, `AGENTS.md` or code instead of restating them.
 
 ## Decision
 
