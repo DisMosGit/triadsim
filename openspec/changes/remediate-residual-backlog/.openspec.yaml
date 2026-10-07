@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-10-07
+# Recorded shortcut, decided with the maintainer: these five fixes do change observable
+# behaviour, so they would normally carry spec deltas. openspec/specs/ is empty and its
+# capability taxonomy is still an open question, so the items are captured as tasks only.
+# Whoever picks this change up should add the deltas and drop this flag before implementing.
+skip_specs: true
