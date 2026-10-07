@@ -126,8 +126,8 @@ func (s *Server) writeTreeError(w http.ResponseWriter, r *http.Request, err *dat
 }
 
 // dataTreeHTTPError maps an RFC 6241 error tag onto a RESTCONF status code
-// (RFC 8040 §7.3). A rejected snapshot is the roadmap's 422; a rejected leaf
-// value stays a 400.
+// (RFC 8040 §7.3). A rejected snapshot is a 422; a rejected leaf value stays
+// a 400.
 func dataTreeHTTPError(err *datatree.Error) *httpError {
 	status := http.StatusInternalServerError
 	switch err.Tag {
