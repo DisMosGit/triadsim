@@ -1,0 +1,54 @@
+schema: spec-driven
+
+# Project context — injected into every artifact instruction.
+context: |
+  TriadSim is a pure-Go, single-binary simulator of a telecom device that combines three domains
+  on one managed device: radio link (RRL), L2 switching and synchronization. It is a modular
+  monolith: one state store, one EventBus, and the management planes SNMP v2c / NETCONF /
+  RESTCONF plus an optional gNMI service. No CGO, no sidecar processes, no external services,
+  no Web UI.
+
+  `AGENTS.md` is the authority on layout and conventions; `CONTRIBUTING.md` is the authority on
+  branches, commit types and scopes. In short: Go 1.27+, a closed dependency list, `log/slog`
+  only, errors wrapped with `%w`, `context.Context` first on anything blocking, and table-driven
+  testify tests using `t.TempDir()` with no property-based tests.
+
+  MVP scope — never exceed: SNMP v2c only (community `public`; no v3, no informs); NETCONF
+  limited to candidate, commit, discard-changes, confirmed-commit and notifications; RESTCONF
+  with no auth, no YANG Patch and no TLS; STP/RSTP and PTP/SyncE are simplified state machines,
+  never real protocol stacks; no Web UI.
+
+  Gates: `./scripts/check.sh` (gofmt, vet, unit tests, plus the integration tests when Docker is
+  present). `testdata/*.golden.json` is never hand-edited — regenerate with
+  `go test ./internal/netconf -update` and inspect the diff. Commits are Conventional Commits,
+  subject only: `type(scope): summary`, one line, no body.
+
+# Per-artifact rules (additive to the schema's built-in guidance).
+rules:
+  proposal:
+    - >-
+      State whether the change touches an MVP scope limit (SNMP v2c, the NETCONF subset,
+      RESTCONF auth/TLS/YANG Patch, the simplified STP/PTP state machines, the no-Web-UI rule).
+    - >-
+      This project has no capability taxonomy yet (`openspec/specs/` is empty). When no
+      spec-level behavior changes, set `skip_specs: true` in the change's `.openspec.yaml`
+      rather than inventing a capability path to satisfy validation.
+  tasks:
+    - >-
+      State each task's verification inline in its checkbox line as `Verify: <command or
+      observable outcome>`, using a command that exists in this repository.
+    - Reference concrete file paths and line numbers when a task describes a defect.
+  design:
+    - Give each decision the alternative that was rejected and the reason it lost.
+
+# Per-operation advisory guidance.
+operations:
+  apply:
+    guidance:
+      - Run `./scripts/check.sh` before ticking a task that changes Go code.
+      - >-
+        Never hand-edit `testdata/*.golden.json`; regenerate with
+        `go test ./internal/netconf -update` and inspect the diff.
+  archive:
+    guidance:
+      - Note any task left unticked, and why, before archiving the change.
